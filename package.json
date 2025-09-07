@@ -1,6 +1,25 @@
 {
   "name": "tategaki",
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "description": "AI搭載縦書き小説エディタ - 小説家・ライター・同人作家のための無料創作ツール",
+  "keywords": [
+    "縦書き小説エディタ",
+    "AI執筆支援",
+    "小説執筆",
+    "文芸創作",
+    "Gemini AI",
+    "日本語縦書き",
+    "Web小説",
+    "同人小説",
+    "創作ツール",
+    "無料エディタ"
+  ],
+  "author": "tategaki",
+  "homepage": "https://tategaki.vercel.app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/tategaki"
+  },
   "private": true,
   "scripts": {
     "dev": "next dev",
