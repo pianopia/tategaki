@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>縦書き小説エディタ</title>
+    <!-- OGP設定 -->
+    <meta property="og:title" content="Editor シンプルな縦書きエディタ">
+    <meta property="og:description" content="シンプルな縦書き文章エディタ">
+    <meta property="og:image" content="https://louddin.cloudfree.jp/demo/editor2/editor_ogp.png">
+    <meta property="og:url" content="https://louddin.cloudfree.jp/demo/editor2">
+    <meta property="og:type" content="website">
+    <meta name="twitter:card" content="summary_large_image">
+    <!-- その他のメタ情報 -->
+    <meta name="description" content="シンプルな縦書きエディタです。">
+    <style>
+        body {
+            font-family: 'Noto Serif JP', serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100vh;
+            background-color: #f4f4f4;
+        }
+        .header {
+            width: 100%;
+            padding: 5px;
+            background-color: #ddd;
+            text-align: right;
+            box-sizing: border-box;
+        }
+        .header button, .header input {
+            margin: 0 10px;
+            padding: 5px 10px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .container {
+            flex: 1;
+            width: 80%;
+            overflow: hidden;
+            position: relative;
+            margin-top: 10px;
+        }
+        .editor {
+            width: 100%;
+            height: 100%;
+            border: 1px solid #ddd;
+            padding: 10px;
+            box-sizing: border-box;
+            writing-mode: vertical-rl;
+            overflow: hidden;
+            background-color: #fff;
+            font-size: 16px;
+            writing-mode: vertical-rl;
+            text-orientation: upright; /* これで数字や英語が縦向きになります */
+            text-combine-upright: none; /* これで数字や英語も縦書きになります */
+        }
+        /* クリック時のデフォルト青いフォーカス枠を非表示にし、
+           キーボード操作時のみ視認性の高い枠を表示 */
+        .editor:focus { outline: none; }
+        .editor:focus-visible {
+            outline: 2px solid #738857; /* テーマに合わせた色 */
+            outline-offset: 2px;
+        }
+        .hidden {
+            display: none;
+        }
+        .pager {
+            margin-top: 10px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .pager button {
+            margin: 0 5px;
+        }
+
+        .header button {
+            background-color: #abc48a;
+            color: white;
+            border: none;
+            border-radius: 20px;
+            padding: 2px 5px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background-color 0.3s, transform 0.3s;
+        }
+
+        .header button:hover {
+            background-color: #738857;
+            transform: scale(1.05);
+        }
+
+        .header button:active {
+            background-color: #004085;
+            transform: scale(0.98);
+        }
+
+        .pager button {
+            background-color: #abc48a;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            padding: 2px 5px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background-color 0.3s, transform 0.3s;
+        }
+
+        .pager button:hover {
+            background-color: #738857;
+            transform: scale(1.05);
+        }
+
+        .pager button:active {
+            background-color: #738857;
+            transform: scale(0.98);
+        }
+
+        .pager input {
+            width: 50px;
+            padding: 8px;
+            font-size: 14px;
+            text-align: center;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        /* ボタン/入力のデフォルト青いフォーカス枠を抑制し、
+           キーボード操作時のみカスタム枠を表示 */
+        .pager button:focus,
+        .pager input:focus,
+        .header button:focus,
+        .header input:focus { outline: none; }
+        .pager button:focus-visible,
+        .pager input:focus-visible,
+        .header button:focus-visible,
+        .header input:focus-visible {
+            outline: 2px solid #738857;
+            outline-offset: 2px;
+        }
+
+        .page-info {
+            font-size: 14px;
+            color: #555;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        /* .editor-container {
+            display: flex;
+        }
+
+        .line-numbers {
+            counter-reset: line;
+            padding-right: 10px;
+            text-align: right;
+            font-size: 14px;
+            color: #888;
+            user-select: none;
+        }
+
+        .line-numbers div {
+            counter-increment: line;
+            line-height: 1.5;
+        }
+
+        .line-numbers div::before {
+            content: counter(line);
+            display: block;
+        } */
+    </style>
+</head>
+<body>
+    <!-- <div class="header">
+        
+    </div> -->
+    <div class="container">
+        <div class="editor" id="editor" contenteditable="true"></div>
+    </div>
+    <div class="pager">
+        <button id="prev-page">前のページ</button>
+        <input type="number" id="page-number" min="1" value="1">
+        <button id="go-page">移動</button>
+        <button id="next-page">次のページ</button>
+
+        <button id="import-btn" style="margin-left:20px;">インポート</button>
+        <button id="export-btn">DLして保存</button>
+        <button id="delete-current-page-btn">現在のページを削除</button>
+        <button id="delete-all-btn">全ページ削除</button>
+
+        ctl + enterで改ページ
+        <input type="file" id="file-input" class="hidden">
+        <button id="toggle-writing-mode-btn">縦書き/横書き切替</button>
+
+        <div class="page-info">
+            <span id="char-count">文字数: 0</span>
+            <span id="line-count">行数: 0</span>
+        </div>
+    </div>
+    <script>
+        const editor = document.getElementById('editor');
+        const fileInput = document.getElementById('file-input');
+        const exportBtn = document.getElementById('export-btn');
+        const importBtn = document.getElementById('import-btn');
+        const prevPageBtn = document.getElementById('prev-page');
+        const nextPageBtn = document.getElementById('next-page');
+        const goPageBtn = document.getElementById('go-page');
+        const pageNumberInput = document.getElementById('page-number');
+
+        let pages = [''];
+        let currentPage = 0;
+
+        function updateEditor() {
+            editor.innerHTML = pages[currentPage].replace(/\n/g, '<br>');
+            pageNumberInput.value = currentPage + 1;
+        }
+
+        function saveCurrentPage() {
+            pages[currentPage] = editor.innerHTML.replace(/<br>/g, '\n');
+        }
+
+        function goToPage(page) {
+            if (page >= 0 && page < pages.length) {
+                saveCurrentPage();
+                currentPage = page;
+                updateEditor();
+            }
+        }
+
+        function addNewPage() {
+            if (currentPage === pages.length - 1) {
+                pages.push('');
+            }
+        }
+
+        function handleFile(file) {
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                pages = event.target.result.split('\n\n'); // ダブル改行でページを分割
+                currentPage = 0;
+                updateEditor();
+            };
+            reader.readAsText(file);
+        }
+
+        function exportText() {
+            saveCurrentPage();
+
+            // HTMLをプレーンテキストに変換
+            const plainTextPages = pages.map(page => {
+                const tempElement = document.createElement('div');
+                tempElement.innerHTML = page;
+                return tempElement.innerText;
+            });
+
+            const blob = new Blob([plainTextPages.join('\n\n')], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'document.txt';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        editor.addEventListener('input', saveCurrentPage);
+        editor.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key === 'Enter') {
+                e.preventDefault();
+                saveCurrentPage();
+                addNewPage();
+                goToPage(currentPage + 1);
+            }
+        });
+
+        prevPageBtn.addEventListener('click', () => goToPage(currentPage - 1));
+        nextPageBtn.addEventListener('click', () => goToPage(currentPage + 1));
+        goPageBtn.addEventListener('click', () => goToPage(Number(pageNumberInput.value) - 1));
+
+        exportBtn.addEventListener('click', exportText);
+        importBtn.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                handleFile(file);
+            }
+        });
+
+        const deleteAllBtn = document.getElementById('delete-all-btn');
+
+        function deleteAllPages() {
+            if (confirm('すべてのページを削除してもよろしいですか？')) {
+                pages = [''];
+                currentPage = 0;
+                updateEditor();
+            }
+        }
+
+        deleteAllBtn.addEventListener('click', deleteAllPages);
+
+        const toggleWritingModeBtn = document.getElementById('toggle-writing-mode-btn');
+        let isVertical = true;
+
+        function toggleWritingMode() {
+            isVertical = !isVertical;
+            editor.style.writingMode = isVertical ? 'vertical-rl' : 'horizontal-tb';
+            editor.style.textOrientation = isVertical ? 'upright' : 'mixed'; // 縦書きの際に文字を縦にする
+        }
+
+        toggleWritingModeBtn.addEventListener('click', toggleWritingMode);
+
+        const charCountElement = document.getElementById('char-count');
+        const lineCountElement = document.getElementById('line-count');
+
+        function updatePageInfo() {
+            const text = editor.innerText;
+            const lines = text.split('\n').length;
+            const charCount = text.length;
+
+            charCountElement.textContent = `文字数: ${charCount}`;
+            lineCountElement.textContent = `行数: ${lines}`;
+        }
+
+        // エディタの内容が変わるたびにページ情報を更新
+        editor.addEventListener('input', () => {
+            saveCurrentPage();
+            updatePageInfo();
+        });
+
+        // 初期ページ情報を設定
+        updatePageInfo();
+
+        // const editorContainer = document.createElement('div');
+        // editorContainer.classList.add('editor-container');
+
+        // const lineNumbers = document.createElement('div');
+        // lineNumbers.classList.add('line-numbers');
+
+        // editorContainer.appendChild(lineNumbers);
+        // editor.parentNode.insertBefore(editorContainer, editor);
+        // editorContainer.appendChild(editor);
+
+        // function updateLineNumbers() {
+        //     const lines = editor.innerText.split('\n').length;
+        //     lineNumbers.innerHTML = Array(lines).fill('<div></div>').join('');
+        // }
+
+        // editor.addEventListener('input', () => {
+        //     saveCurrentPage();
+        //     updateLineNumbers();
+        //     updatePageInfo();
+        // });
+
+        // updateLineNumbers();
+
+        const deleteCurrentPageBtn = document.getElementById('delete-current-page-btn');
+
+        function deleteCurrentPage() {
+            if (pages.length > 1) { // 最後の1ページは削除しない
+                pages.splice(currentPage, 1);
+                if (currentPage >= pages.length) {
+                    currentPage = pages.length - 1; // 削除後に範囲外にならないよう調整
+                }
+                updateEditor();
+            } else {
+                // 最後の1ページが削除されないようにする場合
+                pages[0] = '';
+                updateEditor();
+            }
+        }
+
+        deleteCurrentPageBtn.addEventListener('click', deleteCurrentPage);
+
+
+        updateEditor(); // 初期ページを表示
+    </script>
+</body>
+</html>

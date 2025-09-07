@@ -1,5 +1,5 @@
 {
-  "name": "countdown",
+  "name": "tategaki",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -9,14 +9,9 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@libsql/client": "^0.15.2",
-    "@prisma/client": "^6.5.0",
-    "@types/better-sqlite3": "^7.6.12",
-    "better-sqlite3": "^11.9.1",
-    "drizzle-orm": "^0.41.0",
-    "lottie-react": "^2.4.1",
-    "next": "15.2.4",
-    "prisma": "^6.5.0",
+    "@ai-sdk/google": "^2.0.12",
+    "ai": "^5.0.34",
+    "next": "^15.5.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

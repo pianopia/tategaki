@@ -1,285 +1,594 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import Link from 'next/link';
+import { useEffect, useState, useRef } from 'react';
 
-type Countdown = {
-  id: number;
-  name: string;
-  targetValue: number;
-  currentValue: number;
-  createdAt: string;
-  updatedAt: string;
+type Page = {
+  id: string;
+  content: string;
 };
 
-export default function Home() {
-  const [countdowns, setCountdowns] = useState<Countdown[]>([]);
-  const [name, setName] = useState('');
-  const [targetValue, setTargetValue] = useState('100');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+export default function TategakiEditor() {
+  const [pages, setPages] = useState<Page[]>([{ id: '1', content: '' }]);
+  const [currentPageIndex, setCurrentPageIndex] = useState(0);
+  const [isVertical, setIsVertical] = useState(true);
+  const [charCount, setCharCount] = useState(0);
+  const [lineCount, setLineCount] = useState(0);
+  const [showHelp, setShowHelp] = useState(false);
+  const [showPromptDialog, setShowPromptDialog] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [aiModel, setAiModel] = useState('gemini-1.5-flash');
+  const [promptText, setPromptText] = useState('');
+  const editorRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    fetchCountdowns();
-  }, []);
+  // 現在のページを取得
+  const currentPage = pages[currentPageIndex];
 
-  const fetchCountdowns = async () => {
+  // ページ情報を更新
+  const updatePageStats = (content: string) => {
+    // HTMLタグを除去してプレーンテキストに変換
+    const text = content.replace(/<br>/g, '\n').replace(/<[^>]*>/g, '');
+    // 改行文字を除いた純粋な文字数をカウント
+    const pureText = text.replace(/\n/g, '');
+    setCharCount(pureText.length);
+    setLineCount(text.split('\n').length);
+  };
+
+  // カーソル位置を保存・復元する関数
+  const saveCursorPosition = () => {
+    if (!editorRef.current) return null;
+    
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return null;
+    
+    const range = selection.getRangeAt(0);
+    return {
+      startOffset: range.startOffset,
+      endOffset: range.endOffset,
+      startContainer: range.startContainer,
+      endContainer: range.endContainer
+    };
+  };
+
+  const restoreCursorPosition = (position: any) => {
+    if (!position || !editorRef.current) return;
+    
     try {
-      setLoading(true);
-      const response = await fetch('/api/count');
-      const data = await response.json();
-      setCountdowns(data);
-      setError('');
-    } catch (err) {
-      setError('カウントアップの取得に失敗しました');
-      console.error(err);
-    } finally {
-      setLoading(false);
+      const selection = window.getSelection();
+      if (!selection) return;
+      
+      const range = document.createRange();
+      range.setStart(position.startContainer, position.startOffset);
+      range.setEnd(position.endContainer, position.endOffset);
+      
+      selection.removeAllRanges();
+      selection.addRange(range);
+    } catch (error) {
+      // カーソル位置復元に失敗した場合は末尾に移動
+      moveCursorToEnd();
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const moveCursorToEnd = () => {
+    if (!editorRef.current) return;
+    
+    const selection = window.getSelection();
+    if (!selection) return;
+    
+    const range = document.createRange();
+    range.selectNodeContents(editorRef.current);
+    range.collapse(false); // 末尾に移動
+    
+    selection.removeAllRanges();
+    selection.addRange(range);
+  };
+
+  // エディタの内容が変更されたときの処理
+  const handleEditorChange = () => {
+    if (editorRef.current) {
+      const content = editorRef.current.innerHTML;
+      const newPages = [...pages];
+      newPages[currentPageIndex] = { ...currentPage, content };
+      setPages(newPages);
+      updatePageStats(content);
+    }
+  };
+
+  // AI文章生成ダイアログを開く
+  const openPromptDialog = () => {
+    setPromptText('');
+    setShowPromptDialog(true);
+  };
+
+  // AI文章生成を実行
+  const generateAIText = async () => {
+    if (!editorRef.current || isGenerating || !promptText.trim()) return;
+
+    setIsGenerating(true);
+    setShowPromptDialog(false);
+    
     try {
-      setLoading(true);
-      const response = await fetch('/api/count', {
+      // 現在のテキストを取得して文脈として使用
+      const currentText = editorRef.current.innerText || '';
+      const context = currentText.slice(-500); // 最後の500文字を文脈として使用
+
+      const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          name, 
-          targetValue: parseInt(targetValue) 
+          userPrompt: promptText,
+          context: context,
+          model: aiModel 
         }),
       });
 
+      const data = await response.json();
+
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || errorData.details || '作成に失敗しました');
+        throw new Error(data.error || 'AI生成に失敗しました');
+      }
+      
+      // カーソル位置に生成されたテキストを挿入
+      const selection = window.getSelection();
+      if (selection && selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0);
+        const textNode = document.createTextNode(data.text);
+        range.insertNode(textNode);
+        range.setStartAfter(textNode);
+        range.setEndAfter(textNode);
+        selection.removeAllRanges();
+        selection.addRange(range);
       }
 
-      const newCountdown = await response.json();
-      setCountdowns([...countdowns, newCountdown]);
-      setName('');
-      setTargetValue('100');
-      setError('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '作成に失敗しました');
-      console.error('Creation error:', err);
+      // ページデータを更新
+      handleEditorChange();
+    } catch (error) {
+      console.error('AI生成エラー:', error);
+      alert(`AI文章生成に失敗しました: ${error instanceof Error ? error.message : '不明なエラー'}`);
     } finally {
-      setLoading(false);
+      setIsGenerating(false);
     }
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('このカウントアップを削除してもよろしいですか？')) return;
+  // キーボードショートカット
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.ctrlKey && e.key === 'Enter') {
+      e.preventDefault();
+      addNewPage();
+    } else if (e.metaKey && e.key === 'k') {
+      e.preventDefault();
+      openPromptDialog();
+    }
+  };
+
+  // 新しいページを追加
+  const addNewPage = () => {
+    const newPage: Page = {
+      id: (pages.length + 1).toString(),
+      content: ''
+    };
+    setPages([...pages, newPage]);
+    setCurrentPageIndex(pages.length);
+    // 新しいページでフォーカスを設定
+    setTimeout(() => {
+      editorRef.current?.focus();
+      moveCursorToEnd();
+    }, 50);
+  };
+
+  // ページ移動
+  const goToPage = (index: number) => {
+    if (index >= 0 && index < pages.length) {
+      setCurrentPageIndex(index);
+      // ページ移動後にフォーカスを戻す
+      setTimeout(() => {
+        editorRef.current?.focus();
+        moveCursorToEnd();
+      }, 50);
+    }
+  };
+
+  // 現在のページを削除
+  const deleteCurrentPage = () => {
+    if (pages.length === 1) {
+      // 最後の1ページの場合は内容をクリア
+      const newPages = [{ id: '1', content: '' }];
+      setPages(newPages);
+      setCurrentPageIndex(0);
+    } else {
+      const newPages = pages.filter((_, index) => index !== currentPageIndex);
+      setPages(newPages);
+      const newIndex = Math.min(currentPageIndex, newPages.length - 1);
+      setCurrentPageIndex(newIndex);
+    }
+    // 削除後にフォーカスを戻す
+    setTimeout(() => {
+      editorRef.current?.focus();
+      moveCursorToEnd();
+    }, 50);
+  };
+
+  // 全ページを削除
+  const deleteAllPages = () => {
+    if (confirm('すべてのページを削除してもよろしいですか？')) {
+      setPages([{ id: '1', content: '' }]);
+      setCurrentPageIndex(0);
+      // 削除後にフォーカスを戻す
+      setTimeout(() => {
+        editorRef.current?.focus();
+        moveCursorToEnd();
+      }, 50);
+    }
+  };
+
+  // ファイルをインポート
+  const handleFileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const content = e.target?.result as string;
+        const pageContents = content.split('\n\n'); // ダブル改行でページ分割
+        const newPages = pageContents.map((content, index) => ({
+          id: (index + 1).toString(),
+          content: content.replace(/\n/g, '<br>')
+        }));
+        setPages(newPages);
+        setCurrentPageIndex(0);
+        // インポート後にフォーカスを設定
+        setTimeout(() => {
+          editorRef.current?.focus();
+          moveCursorToEnd();
+        }, 50);
+      };
+      reader.readAsText(file);
+    }
+  };
+
+  // ファイルをエクスポート
+  const handleFileExport = () => {
+    const plainTextPages = pages.map(page => {
+      const tempElement = document.createElement('div');
+      tempElement.innerHTML = page.content;
+      return tempElement.innerText;
+    });
     
-    try {
-      setLoading(true);
-      const response = await fetch(`/api/count/${id}`, {
-        method: 'DELETE',
-      });
-      
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || '削除に失敗しました');
-      }
-      
-      setCountdowns(countdowns.filter(countdown => countdown.id !== id));
-      setError('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '削除に失敗しました');
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
+    const blob = new Blob([plainTextPages.join('\n\n')], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'tategaki-document.txt';
+    a.click();
+    URL.revokeObjectURL(url);
   };
+
+  // 縦書き/横書き切替
+  const toggleWritingMode = () => {
+    setIsVertical(!isVertical);
+  };
+
+  // エディタの内容を更新
+  useEffect(() => {
+    if (editorRef.current) {
+      const cursorPosition = saveCursorPosition();
+      editorRef.current.innerHTML = currentPage.content;
+      updatePageStats(currentPage.content);
+      
+      // カーソル位置を復元、失敗したら末尾に移動
+      setTimeout(() => {
+        if (cursorPosition) {
+          restoreCursorPosition(cursorPosition);
+        } else {
+          moveCursorToEnd();
+        }
+        editorRef.current?.focus();
+      }, 0);
+    }
+  }, [currentPageIndex]);
+
+  // 初期フォーカス
+  useEffect(() => {
+    if (editorRef.current) {
+      editorRef.current.focus();
+      moveCursorToEnd();
+    }
+  }, []);
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 relative overflow-hidden">
-      {/* 背景装飾 */}
-      <div className="absolute inset-0 opacity-20">
-        <div className="absolute inset-0" style={{
-          backgroundImage: `radial-gradient(circle at 25px 25px, rgba(156, 146, 172, 0.1) 2px, transparent 2px)`,
-          backgroundSize: '50px 50px'
-        }}></div>
-      </div>
-      
-      {/* 浮遊する装飾要素 */}
-      <div className="absolute top-20 left-4 sm:left-10 w-12 h-12 sm:w-20 sm:h-20 bg-gradient-to-r from-pink-400 to-purple-400 rounded-full opacity-20 animate-pulse"></div>
-      <div className="absolute top-40 right-4 sm:right-20 w-10 h-10 sm:w-16 sm:h-16 bg-gradient-to-r from-blue-400 to-cyan-400 rounded-full opacity-20 animate-bounce"></div>
-      <div className="absolute bottom-20 left-4 sm:left-20 w-16 h-16 sm:w-24 sm:h-24 bg-gradient-to-r from-yellow-400 to-orange-400 rounded-full opacity-20 animate-pulse delay-1000"></div>
-      <div className="absolute bottom-40 right-4 sm:right-10 w-8 h-8 sm:w-12 sm:h-12 bg-gradient-to-r from-green-400 to-teal-400 rounded-full opacity-20 animate-bounce delay-500"></div>
-      
-      <div className="relative z-10 flex flex-col items-center p-4 sm:p-8">
-        <div className="w-full max-w-6xl">
-          {/* ヘッダー */}
-          <div className="text-center mb-8 sm:mb-12 animate-fade-in">
-            <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-r from-purple-400 to-pink-400 rounded-full mb-4 sm:mb-6 shadow-2xl">
-              <span className="text-2xl sm:text-3xl">🎯</span>
+    <main className="h-screen bg-white flex flex-col overflow-hidden">
+      {/* 極小ヘッダー */}
+      <div className="bg-gray-100/50 border-b border-gray-200 px-2 py-1 flex-shrink-0">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center">
+            <div className="w-4 h-4 bg-gray-600 rounded flex items-center justify-center mr-2">
+              <span className="text-white text-xs font-bold">縦</span>
             </div>
-            <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold bg-gradient-to-r from-white via-purple-200 to-pink-200 bg-clip-text text-transparent mb-4 drop-shadow-lg">
-              カウントアップチャレンジ
-            </h1>
-            <p className="text-lg sm:text-xl text-purple-200 opacity-90">目標に向かって一歩ずつ進もう</p>
+            <h1 className="text-sm font-medium text-gray-700">tategaki</h1>
           </div>
           
-          {/* 新規作成フォーム */}
-          <div className="bg-white/10 backdrop-blur-lg p-4 sm:p-8 rounded-3xl shadow-2xl mb-8 sm:mb-12 border border-white/20 hover:bg-white/15 transition-all duration-300 transform hover:scale-[1.02]">
-            <div className="flex items-center mb-4 sm:mb-6">
-              <div className="w-6 h-6 sm:w-8 sm:h-8 bg-gradient-to-r from-green-400 to-blue-400 rounded-full flex items-center justify-center mr-3">
-                <span className="text-white text-sm sm:text-lg">✨</span>
-              </div>
-              <h2 className="text-xl sm:text-2xl md:text-3xl font-bold text-white">新規カウントアップ作成</h2>
-            </div>
-            <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-6">
-              <div className="space-y-2">
-                <label htmlFor="name" className="block text-white/90 font-semibold text-base sm:text-lg">📝 名前</label>
-                <input
-                  id="name"
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full bg-white/20 backdrop-blur-sm border border-white/30 p-3 sm:p-4 rounded-2xl shadow-lg text-white placeholder-white/60 focus:outline-none focus:ring-4 focus:ring-purple-400/50 focus:border-purple-400 transition-all duration-300 text-sm sm:text-base"
-                  placeholder="例：読書チャレンジ、筋トレ回数など"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <label htmlFor="targetValue" className="block text-white/90 font-semibold text-base sm:text-lg">🎯 目標値</label>
-                <input
-                  id="targetValue"
-                  type="number"
-                  value={targetValue}
-                  onChange={(e) => setTargetValue(e.target.value)}
-                  className="w-full bg-white/20 backdrop-blur-sm border border-white/30 p-3 sm:p-4 rounded-2xl shadow-lg text-white placeholder-white/60 focus:outline-none focus:ring-4 focus:ring-purple-400/50 focus:border-purple-400 transition-all duration-300 text-sm sm:text-base"
-                  placeholder="達成したい数値"
-                  min="1"
-                  required
-                />
-              </div>
-              <button 
-                type="submit" 
-                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white px-6 sm:px-8 py-3 sm:py-4 rounded-2xl shadow-2xl font-bold text-base sm:text-lg transition-all duration-300 transform hover:scale-105 hover:shadow-purple-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={loading}
-              >
-                {loading ? (
-                  <div className="flex items-center justify-center">
-                    <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2"></div>
-                    作成中...
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-center">
-                    <span className="mr-2">🚀</span>
-                    作成する
-                  </div>
-                )}
-              </button>
-            </form>
-          </div>
-
-          {/* エラーメッセージ */}
-          {error && (
-            <div className="bg-red-500/20 backdrop-blur-sm border border-red-400/50 text-red-100 px-6 py-4 rounded-2xl mb-8 shadow-lg animate-shake">
-              <div className="flex items-center">
-                <span className="text-2xl mr-3">⚠️</span>
-                {error}
-              </div>
-            </div>
-          )}
-          
-          {/* カウントアップ一覧 */}
-          <div className="bg-white/10 backdrop-blur-lg p-4 sm:p-8 rounded-3xl shadow-2xl border border-white/20">
-            <div className="flex items-center mb-6 sm:mb-8">
-              <div className="w-6 h-6 sm:w-8 sm:h-8 bg-gradient-to-r from-blue-400 to-purple-400 rounded-full flex items-center justify-center mr-3">
-                <span className="text-white text-sm sm:text-lg">📊</span>
-              </div>
-              <h2 className="text-xl sm:text-2xl md:text-3xl font-bold text-white">カウントアップ一覧</h2>
-            </div>
+          {/* コンパクトコントロール */}
+          <div className="flex items-center space-x-1">
+            {/* ページナビゲーション */}
+            <button
+              onClick={() => goToPage(currentPageIndex - 1)}
+              disabled={currentPageIndex === 0}
+              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+              title="前のページ"
+            >
+              ◀
+            </button>
             
-            {loading && countdowns.length === 0 ? (
-              <div className="text-center py-8 sm:py-12">
-                <div className="inline-flex items-center justify-center w-12 h-12 sm:w-16 sm:h-16 bg-white/20 rounded-full mb-4 animate-spin">
-                  <div className="w-6 h-6 sm:w-8 sm:h-8 border-2 border-white/30 border-t-white rounded-full"></div>
-                </div>
-                <p className="text-white/80 text-lg sm:text-xl">読み込み中...</p>
-              </div>
-            ) : countdowns.length === 0 ? (
-              <div className="text-center py-8 sm:py-12">
-                <div className="text-4xl sm:text-6xl mb-4">📈</div>
-                <p className="text-white/80 text-lg sm:text-xl mb-4">カウントアップがありません</p>
-                <p className="text-white/60 text-sm sm:text-base">新しく作成して目標に向かって進みましょう！</p>
-              </div>
-            ) : (
-              <div className="grid gap-4 sm:gap-6">
-                {countdowns.map((countdown, index) => {
-                  const progress = Math.round((countdown.currentValue / countdown.targetValue) * 100);
-                  const isCompleted = countdown.currentValue >= countdown.targetValue;
-                  
-                  return (
-                    <div 
-                      key={countdown.id} 
-                      className={`bg-white/10 backdrop-blur-sm border border-white/20 p-4 sm:p-6 rounded-2xl shadow-lg hover:bg-white/15 transition-all duration-300 transform hover:scale-[1.02] animate-fade-in-up ${isCompleted ? 'ring-2 ring-yellow-400/50' : ''}`}
-                      style={{ animationDelay: `${index * 100}ms` }}
-                    >
-                      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                        <div className="flex-1">
-                          <div className="flex items-center mb-3">
-                            <span className="text-xl sm:text-2xl mr-3">{isCompleted ? '🏆' : '🎯'}</span>
-                            <h3 className="font-bold text-lg sm:text-xl lg:text-2xl text-white">{countdown.name}</h3>
-                            {isCompleted && (
-                              <span className="ml-3 bg-gradient-to-r from-yellow-400 to-orange-400 text-black px-2 sm:px-3 py-1 rounded-full text-xs sm:text-sm font-bold animate-pulse">
-                                完了！
-                              </span>
-                            )}
-                          </div>
-                          
-                          {/* プログレスバー */}
-                          <div className="mb-4">
-                            <div className="flex justify-between text-white/80 text-xs sm:text-sm mb-2">
-                              <span>進捗: {countdown.currentValue} / {countdown.targetValue}</span>
-                              <span>{progress}%</span>
-                            </div>
-                            <div className="w-full bg-white/20 rounded-full h-2 sm:h-3 overflow-hidden">
-                              <div 
-                                className={`h-2 sm:h-3 rounded-full transition-all duration-1000 ease-out ${
-                                  isCompleted 
-                                    ? 'bg-gradient-to-r from-yellow-400 to-orange-400' 
-                                    : 'bg-gradient-to-r from-blue-400 to-purple-400'
-                                }`}
-                                style={{ width: `${Math.min(100, progress)}%` }}
-                              ></div>
-                            </div>
-                          </div>
-                          
-                          <p className="text-white/70 text-xs sm:text-sm">
-                            作成日: {new Date(countdown.createdAt).toLocaleDateString('ja-JP')}
-                          </p>
-                        </div>
-                        
-                        <div className="flex flex-row lg:flex-col gap-3 lg:ml-6">
-                          <Link
-                            href={`/count/${countdown.id}`}
-                            className="flex-1 lg:flex-none bg-gradient-to-r from-green-500 to-teal-500 hover:from-green-600 hover:to-teal-600 text-white px-4 sm:px-6 py-2 sm:py-3 rounded-xl shadow-lg font-bold transition-all duration-300 transform hover:scale-105 text-center text-sm sm:text-base"
-                          >
-                            <span className="mr-2">👀</span>
-                            表示
-                          </Link>
-                          <button
-                            onClick={() => handleDelete(countdown.id)}
-                            className="flex-1 lg:flex-none bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white px-4 sm:px-6 py-2 sm:py-3 rounded-xl shadow-lg font-bold transition-all duration-300 transform hover:scale-105 text-sm sm:text-base"
-                          >
-                            <span className="mr-2">🗑️</span>
-                            削除
-                          </button>
+            <input
+              type="number"
+              min="1"
+              max={pages.length}
+              value={currentPageIndex + 1}
+              onChange={(e) => goToPage(Number(e.target.value) - 1)}
+              className="w-8 h-6 px-1 text-xs text-center border border-gray-300 rounded"
+            />
+            <span className="text-xs text-gray-500">/{pages.length}</span>
+            
+            <button
+              onClick={() => goToPage(currentPageIndex + 1)}
+              disabled={currentPageIndex === pages.length - 1}
+              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+              title="次のページ"
+            >
+              ▶
+            </button>
+            
+            {/* 機能ボタン */}
+            <div className="w-px h-4 bg-gray-300 mx-1"></div>
+            
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".txt"
+              onChange={handleFileImport}
+              className="hidden"
+            />
+            
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+              title="ファイルを開く"
+            >
+              📂
+            </button>
+            
+            <button
+              onClick={handleFileExport}
+              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+              title="ファイルを保存"
+            >
+              💾
+            </button>
+            
+            <button
+              onClick={toggleWritingMode}
+              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+              title={isVertical ? '横書きに切替' : '縦書きに切替'}
+            >
+              {isVertical ? '≡' : '∥'}
+            </button>
+            
+            <button
+              onClick={addNewPage}
+              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+              title="新規ページ"
+            >
+              ＋
+            </button>
+            
+            <button
+              onClick={deleteCurrentPage}
+              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+              title="ページ削除"
+            >
+              ■
+            </button>
+            
+            <button
+              onClick={deleteAllPages}
+              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+              title="全削除"
+            >
+              ✕
+            </button>
+            
+            {/* AI生成ボタン */}
+            <div className="w-px h-4 bg-gray-300 mx-1"></div>
+            
+            <button
+              onClick={openPromptDialog}
+              disabled={isGenerating}
+              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 disabled:opacity-50"
+              title="AI文章生成 (Cmd+K)"
+            >
+              {isGenerating ? '⏳' : '✨'}
+            </button>
+            
+            {/* AIモデル選択 */}
+            <select
+              value={aiModel}
+              onChange={(e) => setAiModel(e.target.value)}
+              className="h-6 px-1 text-xs border border-gray-400 rounded bg-white"
+              title="AIモデル選択"
+            >
+              <option value="gemini-1.5-flash">Flash</option>
+              <option value="gemini-1.5-pro">Pro</option>
+              <option value="gemini-2.0-flash-exp">2.0 Flash</option>
+            </select>
+            
+            {/* ヘルプボタン */}
+            <button
+              onClick={() => setShowHelp(true)}
+              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+              title="ショートカットキー"
+            >
+              ？
+            </button>
                         </div>
                       </div>
                     </div>
-                  );
-                })}
+
+      {/* エディタエリア（画面の95%） */}
+      <div className="flex-1 overflow-hidden">
+        <div
+          ref={editorRef}
+          contentEditable
+          className={`w-full h-full p-8 outline-none resize-none font-serif text-lg leading-relaxed editor-focus ${
+            isVertical
+              ? 'writing-mode-vertical-rl text-orientation-upright'
+              : 'writing-mode-horizontal-tb'
+          }`}
+          style={{
+            writingMode: isVertical ? 'vertical-rl' : 'horizontal-tb',
+            textOrientation: isVertical ? 'upright' : 'mixed',
+            fontFamily: '"Noto Serif JP", "Yu Mincho", "YuMincho", "Hiragino Mincho ProN", serif'
+          }}
+          onInput={handleEditorChange}
+          onKeyDown={handleKeyDown}
+          suppressContentEditableWarning={true}
+        />
               </div>
-            )}
-          </div>
+
+      {/* 極小ステータスバー */}
+      <div className="bg-gray-100/50 border-t border-gray-200 px-2 py-1 flex-shrink-0">
+        <div className="flex items-center justify-between text-xs text-gray-500">
+          <span>文字数: {charCount}</span>
+          <span>行数: {lineCount}</span>
+          <span>Ctrl+Enter: 改ページ | Cmd+K: AI生成</span>
         </div>
       </div>
+
+      {/* AI生成プロンプトダイアログ */}
+      {showPromptDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-lg w-full mx-4 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-800">AI文章生成</h3>
+              <button
+                onClick={() => setShowPromptDialog(false)}
+                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  AIへの指示を入力してください
+                </label>
+                <textarea
+                  value={promptText}
+                  onChange={(e) => setPromptText(e.target.value)}
+                  className="w-full h-32 p-3 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="例: 続きを書いて、この場面をより詳しく描写して、対話を追加して、など"
+                  autoFocus
+                />
+              </div>
+              
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <label className="text-sm text-gray-600">モデル:</label>
+                  <select
+                    value={aiModel}
+                    onChange={(e) => setAiModel(e.target.value)}
+                    className="px-2 py-1 text-sm border border-gray-300 rounded"
+                  >
+                    <option value="gemini-1.5-flash">Flash (高速)</option>
+                    <option value="gemini-1.5-pro">Pro (高性能)</option>
+                    <option value="gemini-2.0-flash-exp">2.0 Flash (実験版)</option>
+                  </select>
+                </div>
+                
+                <div className="flex space-x-2">
+                  <button
+                    onClick={() => setShowPromptDialog(false)}
+                    className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-100"
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    onClick={generateAIText}
+                    disabled={!promptText.trim() || isGenerating}
+                    className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isGenerating ? '生成中...' : '生成'}
+                  </button>
+                </div>
+              </div>
+            </div>
+            
+            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded text-xs">
+              <strong>ヒント:</strong> 現在書いている文章の最後の500文字が文脈として自動的に送信されます。
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ヘルプダイアログ */}
+      {showHelp && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-800">ショートカットキー</h3>
+              <button
+                onClick={() => setShowHelp(false)}
+                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="space-y-3 text-sm">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="font-semibold text-gray-700">キー</div>
+                <div className="font-semibold text-gray-700">機能</div>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-2 py-1 border-t border-gray-200">
+                <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Ctrl + Enter</kbd>
+                <span>新しいページを作成</span>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-2 py-1">
+                <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Cmd + K</kbd>
+                <span>AI文章生成</span>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-2 py-1">
+                <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">← / →</kbd>
+                <span>ページ移動</span>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-2 py-1">
+                <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">縦/横ボタン</kbd>
+                <span>書字モード切替</span>
+              </div>
+            </div>
+            
+            <div className="mt-6 p-3 bg-yellow-50 border border-yellow-200 rounded text-xs">
+              <strong>AI生成について:</strong><br/>
+              AIを使用するには、環境変数にGOOGLE_GENERATIVE_AI_API_KEYを設定してください。
+              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline ml-1">
+                API キーを取得
+              </a>
+            </div>
+            
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={() => setShowHelp(false)}
+                className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
+              >
+                閉じる
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
