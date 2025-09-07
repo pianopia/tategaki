@@ -192,6 +192,12 @@ export default function TategakiEditor() {
     } else if (e.metaKey && e.key === 'k') {
       e.preventDefault();
       openPromptDialog();
+    } else if (e.ctrlKey && e.key === 'ArrowLeft') {
+      e.preventDefault();
+      goToPage(currentPageIndex + 1);
+    } else if (e.ctrlKey && e.key === 'ArrowRight') {
+      e.preventDefault();
+      goToPage(currentPageIndex - 1);
     }
   };
 
@@ -602,7 +608,7 @@ export default function TategakiEditor() {
               </div>
               
               <div className="grid grid-cols-2 gap-2 py-1">
-                <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">← / →</kbd>
+                <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Ctrl + ← / →</kbd>
                 <span>ページ移動</span>
                           </div>
                           
