@@ -12,7 +12,7 @@ export default function TategakiEditor() {
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [isVertical, setIsVertical] = useState(true);
   const [charCount, setCharCount] = useState(0);
-  const [lineCount, setLineCount] = useState(0);
+  const [lineCount, setLineCount] = useState(1);
   const [showHelp, setShowHelp] = useState(false);
   const [showPromptDialog, setShowPromptDialog] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -24,15 +24,6 @@ export default function TategakiEditor() {
   // 現在のページを取得
   const currentPage = pages[currentPageIndex];
 
-  // ページ情報を更新
-  const updatePageStats = (content: string) => {
-    // HTMLタグを除去してプレーンテキストに変換
-    const text = content.replace(/<br>/g, '\n').replace(/<[^>]*>/g, '');
-    // 改行文字を除いた純粋な文字数をカウント
-    const pureText = text.replace(/\n/g, '');
-    setCharCount(pureText.length);
-    setLineCount(text.split('\n').length);
-  };
 
   // カーソル位置を保存・復元する関数
   const saveCursorPosition = () => {
@@ -83,6 +74,41 @@ export default function TategakiEditor() {
     selection.addRange(range);
   };
 
+  // HTMLの構造から実際の行数を計算する関数
+  const calculateActualLineCount = () => {
+    if (!editorRef.current) return 1;
+    
+    const htmlContent = editorRef.current.innerHTML;
+    console.log('HTML content:', htmlContent);
+    
+    // 完全に空の場合は1行
+    if (!htmlContent || htmlContent === '' || htmlContent === '<br>') {
+      return 1;
+    }
+    
+    // <div>要素の数を数える（contentEditableでは各行が<div>になる）
+    const divMatches = htmlContent.match(/<div[^>]*>/g);
+    const divCount = divMatches ? divMatches.length : 0;
+    
+    // <br>タグの数を数える
+    const brMatches = htmlContent.match(/<br[^>]*>/g);
+    const brCount = brMatches ? brMatches.length : 0;
+    
+    console.log('Div count:', divCount, 'BR count:', brCount);
+    
+    // 行数の計算ロジック
+    if (divCount > 0) {
+      // <div>がある場合は、div数が行数（各divが1行を表す）
+      return divCount;
+    } else if (brCount > 0) {
+      // <br>のみの場合は、br数 + 1が行数
+      return brCount + 1;
+    } else {
+      // テキストがある場合は1行
+      return 1;
+    }
+  };
+
   // エディタの内容が変更されたときの処理
   const handleEditorChange = () => {
     if (editorRef.current) {
@@ -90,7 +116,15 @@ export default function TategakiEditor() {
       const newPages = [...pages];
       newPages[currentPageIndex] = { ...currentPage, content };
       setPages(newPages);
-      updatePageStats(content);
+      
+      // 純粋な文字数をカウント（改行文字は除く）
+      const plainText = editorRef.current.innerText || '';
+      const pureText = plainText.replace(/\n/g, '');
+      setCharCount(pureText.length);
+      
+      // 実際の行数を計算
+      const actualLines = calculateActualLineCount();
+      setLineCount(actualLines);
     }
   };
 
@@ -272,10 +306,12 @@ export default function TategakiEditor() {
     if (editorRef.current) {
       const cursorPosition = saveCursorPosition();
       editorRef.current.innerHTML = currentPage.content;
-      updatePageStats(currentPage.content);
       
-      // カーソル位置を復元、失敗したら末尾に移動
+      // DOMが更新された後に統計を更新
       setTimeout(() => {
+        handleEditorChange();
+        
+        // カーソル位置を復元、失敗したら末尾に移動
         if (cursorPosition) {
           restoreCursorPosition(cursorPosition);
         } else {
@@ -289,8 +325,14 @@ export default function TategakiEditor() {
   // 初期フォーカス
   useEffect(() => {
     if (editorRef.current) {
-      editorRef.current.focus();
-      moveCursorToEnd();
+      // 初期化時にも統計を更新
+      setTimeout(() => {
+        // 初期状態では強制的に1行に設定
+        setCharCount(0);
+        setLineCount(1);
+        editorRef.current?.focus();
+        moveCursorToEnd();
+      }, 100);
     }
   }, []);
 
@@ -502,7 +544,7 @@ export default function TategakiEditor() {
                     <option value="gemini-1.5-pro">Pro (高性能)</option>
                     <option value="gemini-2.0-flash-exp">2.0 Flash (実験版)</option>
                   </select>
-                </div>
+              </div>
                 
                 <div className="flex space-x-2">
                   <button
@@ -511,24 +553,24 @@ export default function TategakiEditor() {
                   >
                     キャンセル
                   </button>
-                  <button
+              <button 
                     onClick={generateAIText}
                     disabled={!promptText.trim() || isGenerating}
                     className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {isGenerating ? '生成中...' : '生成'}
-                  </button>
-                </div>
+              </button>
+          </div>
               </div>
             </div>
             
             <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded text-xs">
               <strong>ヒント:</strong> 現在書いている文章の最後の500文字が文脈として自動的に送信されます。
             </div>
-          </div>
-        </div>
-      )}
-
+              </div>
+            </div>
+          )}
+          
       {/* ヘルプダイアログ */}
       {showHelp && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -547,7 +589,7 @@ export default function TategakiEditor() {
               <div className="grid grid-cols-2 gap-2">
                 <div className="font-semibold text-gray-700">キー</div>
                 <div className="font-semibold text-gray-700">機能</div>
-              </div>
+                </div>
               
               <div className="grid grid-cols-2 gap-2 py-1 border-t border-gray-200">
                 <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Ctrl + Enter</kbd>
@@ -562,30 +604,30 @@ export default function TategakiEditor() {
               <div className="grid grid-cols-2 gap-2 py-1">
                 <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">← / →</kbd>
                 <span>ページ移動</span>
-              </div>
-              
+                          </div>
+                          
               <div className="grid grid-cols-2 gap-2 py-1">
                 <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">縦/横ボタン</kbd>
                 <span>書字モード切替</span>
-              </div>
-            </div>
-            
+                            </div>
+                          </div>
+                          
             <div className="mt-6 p-3 bg-yellow-50 border border-yellow-200 rounded text-xs">
               <strong>AI生成について:</strong><br/>
               AIを使用するには、環境変数にGOOGLE_GENERATIVE_AI_API_KEYを設定してください。
               <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline ml-1">
                 API キーを取得
               </a>
-            </div>
-            
+                        </div>
+                        
             <div className="mt-4 flex justify-end">
-              <button
+                          <button
                 onClick={() => setShowHelp(false)}
                 className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
-              >
+                          >
                 閉じる
-              </button>
-            </div>
+                          </button>
+                        </div>
           </div>
         </div>
       )}
