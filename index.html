@@ -241,7 +241,30 @@
         function handleFile(file) {
             const reader = new FileReader();
             reader.onload = function(event) {
-                pages = event.target.result.split('\n\n'); // ダブル改行でページを分割
+                const raw = (event.target.result || '').toString();
+                const normalized = raw.replace(/\r\n?/g, '\n');
+
+                // 区切り検出（専用セパレータ優先、次に区切り線・連続改行）
+                const sentinelRe = /\n?\s*===\s*tategaki:page-break\s*===\s*\n?/i;
+                const hrLineRe = /\n\s*(?:-{3,}|={3,})\s*\n/;
+                const tripleNlRe = /\n{3,}/;
+
+                let parts = [normalized];
+                if (sentinelRe.test(normalized)) {
+                    parts = normalized.split(sentinelRe);
+                } else if (hrLineRe.test(normalized)) {
+                    parts = normalized.split(hrLineRe);
+                } else if (tripleNlRe.test(normalized)) {
+                    parts = normalized.split(tripleNlRe);
+                } else {
+                    const doubleNlRe = /\n{2}/;
+                    if (doubleNlRe.test(normalized)) {
+                        parts = normalized.split(doubleNlRe);
+                    }
+                }
+
+                // pagesはプレーンテキスト（\n）で保持
+                pages = parts;
                 currentPage = 0;
                 updateEditor();
             };
@@ -251,14 +274,9 @@
         function exportText() {
             saveCurrentPage();
 
-            // HTMLをプレーンテキストに変換
-            const plainTextPages = pages.map(page => {
-                const tempElement = document.createElement('div');
-                tempElement.innerHTML = page;
-                return tempElement.innerText;
-            });
-
-            const blob = new Blob([plainTextPages.join('\n\n')], { type: 'text/plain' });
+            // pagesは既にプレーンテキストなので、そのまま出力
+            const PAGE_BREAK_SENTINEL = '\n\n=== tategaki:page-break ===\n\n';
+            const blob = new Blob([pages.join(PAGE_BREAK_SENTINEL)], { type: 'text/plain' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;

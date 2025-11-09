@@ -252,9 +252,15 @@ export default function TategakiEditor() {
   const handleEditorChange = () => {
     if (editorRef.current) {
       const content = editorRef.current.innerHTML;
-      const newPages = [...pages];
-      newPages[currentPageIndex] = { ...currentPage, content };
-      setPages(newPages);
+      // 変更がない場合はページ配列を更新しない（無限再レンダを防止）
+      if (content !== currentPage.content) {
+        setPages(prev => {
+          const next = [...prev];
+          const idx = Math.min(currentPageIndex, next.length - 1);
+          next[idx] = { ...next[idx], content };
+          return next;
+        });
+      }
       
       // 純粋な文字数をカウント（改行文字は除く）
       const plainText = editorRef.current.innerText || '';
@@ -421,28 +427,58 @@ export default function TategakiEditor() {
     if (file) {
       const reader = new FileReader();
       reader.onload = (e) => {
-        const content = e.target?.result as string;
+        const content = (e.target?.result as string) || '';
+        // 事前に改行コードをLFへ正規化
+        const normalized = content.replace(/\r\n?/g, '\n');
         
-        // ページ区切り文字で分割（複数の区切り文字に対応）
-        const pageDelimiters = ['\n\n\n', '\n\n', '---', '==='];
-        let pageContents: string[] = [content];
-        
-        // 各区切り文字で試して分割
-        for (const delimiter of pageDelimiters) {
-          if (content.includes(delimiter)) {
-            pageContents = content.split(delimiter);
-            break;
+        // ページ区切り検出（明示的なセパレータ優先）
+        const SENTINEL_TEXT = '=== tategaki:page-break ===';
+        const lines = normalized.split('\n');
+        const segments: string[] = [];
+        let buffer: string[] = [];
+        for (const line of lines) {
+          const trimmed = line.trim();
+          // 専用セパレータ行を厳密に検出（大小無視）
+          if (trimmed.toLowerCase() === SENTINEL_TEXT.toLowerCase()) {
+            segments.push(buffer.join('\n'));
+            buffer = [];
+          } else {
+            buffer.push(line);
           }
         }
+        segments.push(buffer.join('\n'));
+
+        let pageContents: string[] = segments;
+
+        // セパレータが見つからず1ページしかない場合は、従来区切りにフォールバック
+        if (pageContents.length === 1) {
+          // 区切り線のみの行（--- または ===）で分割
+          const hrLineRe = /\n\s*(?:-{3,}|={3,})\s*\n/;
+          if (hrLineRe.test(normalized)) {
+            pageContents = normalized.split(hrLineRe);
+          } else {
+            const tripleNlRe = /\n{3,}/; // 3つ以上の連続改行
+            if (tripleNlRe.test(normalized)) {
+              pageContents = normalized.split(tripleNlRe);
+            } else {
+              const doubleNlRe = /\n{2}/; // ダブル改行
+              if (doubleNlRe.test(normalized)) {
+                const tentative = normalized.split(doubleNlRe);
+                if (tentative.length > 1) pageContents = tentative;
+              }
+            }
+          }
+        }
+
+        // console.debug('Imported pages:', pageContents.length);
         
-        // 空のページを除去し、改行をHTMLに変換
-        const newPages = pageContents
-          .filter(pageContent => pageContent.trim().length > 0)
-          .map((pageContent, index) => ({
-            id: (index + 1).toString(),
-            // 改行を適切にHTMLに変換（contentEditableに適した形式）
-            content: pageContent.trim().replace(/\n/g, '<br>')
-          }));
+        console.log('tategaki import: split into pages =', pageContents.length);
+        // 改行をHTMLに変換（先頭末尾の空行も保持）
+        const newPages = pageContents.map((pageContent, index) => ({
+          id: (index + 1).toString(),
+          content: (pageContent || '')
+            .replace(/\n/g, '<br>')
+        }));
         
         // 最低1ページは必要
         if (newPages.length === 0) {
@@ -452,13 +488,11 @@ export default function TategakiEditor() {
         setPages(newPages);
         setCurrentPageIndex(0);
         
-        // インポート後にフォーカスを設定し、自動改ページチェック
+        // インポート後にフォーカスのみ設定（古いクロージャで状態を上書きしないため）
         setTimeout(() => {
           if (editorRef.current) {
             editorRef.current.focus();
             moveCursorToEnd();
-            // インポート後の自動改ページチェック
-            handleEditorChange();
           }
         }, 100);
       };
@@ -468,26 +502,41 @@ export default function TategakiEditor() {
 
   // ファイルをエクスポート
   const handleFileExport = () => {
-    const plainTextPages = pages.map(page => {
-      if (!page.content) return '';
-      
-      // HTMLコンテンツをプレーンテキストに変換
-      const tempElement = document.createElement('div');
-      tempElement.innerHTML = page.content;
-      
-      // innerTextを使って自然な改行を取得
-      let plainText = tempElement.innerText || '';
-      
-      // 空のページでない場合のみ処理
-      if (plainText.trim()) {
-        return plainText;
-      }
-      return '';
-    }).filter(pageText => pageText.trim().length > 0); // 空ページを除去
-    
-    // ページ間をトリプル改行で区切って保存（明確な区切りのため）
-    const fileContent = plainTextPages.join('\n\n\n');
-    
+    // HTMLを堅牢にプレーンテキストへ変換（改行・空行を保持）
+    const htmlToPlainText = (html: string): string => {
+      if (!html) return '';
+
+      // 一旦、<br> と代表的なブロック要素の終了タグを\nに変換
+      let text = html
+        // <br> -> 改行
+        .replace(/<br\s*\/?>/gi, '\n')
+        // ブロック要素の閉じタグで改行（div, p, li, 各種見出し, blockquote, pre）
+        .replace(/<\/(div|p|li|h[1-6]|blockquote|pre)>/gi, '\n')
+        // li開始前に・や番号を入れない（シンプルに改行だけ）
+        .replace(/<\s*li[^>]*>/gi, '')
+        // 残りのタグを除去
+        .replace(/<[^>]+>/g, '')
+        // HTMLエンティティの最低限のデコード（&nbsp; など）
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&');
+
+      // 改行コードを統一し、行末の余計な空白を除去
+      text = text
+        .replace(/\r\n?/g, '\n') // CRLF/CR を LF に統一
+        .replace(/[\t ]+\n/g, '\n'); // 行末スペースを削除
+
+      return text;
+    };
+
+    // ページ内容（空ページも保持）
+    const plainTextPages = pages.map(page => htmlToPlainText(page.content || ''));
+
+    // tategaki専用の明示的ページ区切りを使用
+    const PAGE_BREAK_SENTINEL = '\n\n=== tategaki:page-break ===\n\n';
+    const fileContent = plainTextPages.join(PAGE_BREAK_SENTINEL);
+
     const blob = new Blob([fileContent], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -507,26 +556,31 @@ export default function TategakiEditor() {
     }, 100);
   };
 
-  // エディタの内容を更新
+  // エディタの内容を更新（ページ配列やページ移動の変化に追従）
   useEffect(() => {
-    if (editorRef.current) {
-      const cursorPosition = saveCursorPosition();
-      editorRef.current.innerHTML = currentPage.content;
-      
-      // DOMが更新された後に統計を更新
-      setTimeout(() => {
-        handleEditorChange();
-        
-        // カーソル位置を復元、失敗したら末尾に移動
-        if (cursorPosition) {
-          restoreCursorPosition(cursorPosition);
-        } else {
-          moveCursorToEnd();
-        }
-        editorRef.current?.focus();
-      }, 0);
-    }
-  }, [currentPageIndex]);
+    if (!editorRef.current) return;
+    const page = pages[currentPageIndex];
+    if (!page) return;
+
+    // すでにDOMと状態が一致している場合は再描画しない（タイピングの引っかかり防止）
+    if (editorRef.current.innerHTML === page.content) return;
+
+    const cursorPosition = saveCursorPosition();
+    editorRef.current.innerHTML = page.content;
+
+    // DOMが更新された後に統計を更新
+    setTimeout(() => {
+      handleEditorChange();
+
+      // カーソル位置を復元、失敗したら末尾に移動
+      if (cursorPosition) {
+        restoreCursorPosition(cursorPosition);
+      } else {
+        moveCursorToEnd();
+      }
+      editorRef.current?.focus();
+    }, 0);
+  }, [currentPageIndex, pages]);
 
   // ウィンドウリサイズ時の最大行数再計算
   useEffect(() => {
@@ -579,7 +633,7 @@ export default function TategakiEditor() {
     <>
       {/* SEO・LLMO対策用の隠しコンテンツ */}
       <div className="sr-only" aria-hidden="true">
-        <h1>tategaki - AI搭載縦書き小説エディタ</h1>
+        <h1>tategaki - 縦書きエディタ</h1>
         <p>縦書き表示とAI執筆支援機能を搭載した無料の小説エディタです。</p>
         <h2>主な機能</h2>
         <ul>
@@ -628,7 +682,7 @@ export default function TategakiEditor() {
               max={pages.length}
               value={currentPageIndex + 1}
               onChange={(e) => goToPage(Number(e.target.value) - 1)}
-              className="w-8 h-6 px-1 text-xs text-center border border-gray-300 rounded"
+              className="w-8 h-6 px-1 text-xs text-center border border-gray-300 rounded text-black"
             />
             <span className="text-xs text-gray-500">/{pages.length}</span>
             
@@ -865,7 +919,7 @@ export default function TategakiEditor() {
               </div>
             </div>
             
-            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded text-xs">
+            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded text-xs text-black">
               <strong>ヒント:</strong> 現在書いている文章の最後の500文字が文脈として自動的に送信されます。
             </div>
               </div>
@@ -943,7 +997,7 @@ export default function TategakiEditor() {
                 <span className="text-white text-2xl font-bold">縦</span>
               </div>
               <h2 className="text-3xl font-bold text-gray-800 mb-2">tategaki へようこそ</h2>
-              <p className="text-lg text-gray-600">AI搭載縦書き小説エディタ</p>
+              <p className="text-lg text-gray-600">AI搭載の縦書きエディタ</p>
             </div>
 
             {/* 機能紹介 */}

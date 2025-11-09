@@ -9,8 +9,20 @@ const notoSerifJP = Noto_Serif_JP({
 });
 
 export const metadata: Metadata = {
-  title: "tategaki - AI搭載縦書き小説エディタ | 無料で使える文芸創作ツール",
-  description: "縦書き表示とAI執筆支援機能を搭載した無料の小説エディタ。原稿用紙風のレイアウトで集中して創作できます。文字数カウント、改ページ機能、テキスト出力対応。小説家・ライター・同人作家の創作活動を支援します。",
+  title: "tategaki - 縦書きエディタ",
+  description: "縦書き表示とAI執筆支援機能を搭載した無料の小説エディタ。文字数カウント、改ページ機能、テキスト出力対応。小説家・ライター・同人作家の創作活動を支援します。",
+  icons: {
+    icon: [
+      { url: '/icon.svg', type: 'image/svg+xml' },
+      { url: '/icon-192.svg', sizes: '192x192', type: 'image/svg+xml' },
+      { url: '/icon-512.svg', sizes: '512x512', type: 'image/svg+xml' }
+    ],
+    shortcut: '/icon.svg',
+    apple: '/apple-icon.svg',
+    other: [
+      { rel: 'icon', type: 'image/svg+xml', url: '/icon.svg' }
+    ]
+  },
   keywords: [
     "縦書き小説エディタ", "AI執筆支援", "小説執筆", "文芸創作", "原稿用紙",
     "小説家", "ライター", "同人小説", "創作ツール", "無料エディタ",
@@ -42,7 +54,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "tategaki - AI搭載縦書き小説エディタ",
+    title: "tategaki - 縦書きエディタ",
     description: "縦書き表示とAI執筆支援機能を搭載した無料の小説エディタ。原稿用紙風のレイアウトで集中して創作。",
     images: ["/editor_ogp.png"],
   },
