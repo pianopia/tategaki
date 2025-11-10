@@ -4,18 +4,20 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
   try {
-    const { userPrompt, context, model = 'gemini-1.5-flash' } = await request.json();
+    const { userPrompt, context, model = 'gemini-1.5-flash', apiKey: apiKeyFromClient } = await request.json();
 
     if (!userPrompt) {
       return NextResponse.json({ error: 'プロンプトが必要です' }, { status: 400 });
     }
 
-    // 環境変数チェック
-    const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+    // APIキーを決定（クライアント提供 > 環境変数）
+    const apiKey = (typeof apiKeyFromClient === 'string' && apiKeyFromClient.trim())
+      ? apiKeyFromClient.trim()
+      : process.env.GOOGLE_GENERATIVE_AI_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
-        { error: 'API キーが設定されていません。環境変数 GOOGLE_GENERATIVE_AI_API_KEY を設定してください。' },
-        { status: 500 }
+        { error: 'API キーが設定されていません。右上の🔑ボタンからキーを設定してください。' },
+        { status: 400 }
       );
     }
 

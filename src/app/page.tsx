@@ -20,6 +20,10 @@ export default function TategakiEditor() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiModel, setAiModel] = useState('gemini-1.5-flash');
   const [promptText, setPromptText] = useState('');
+  const [googleApiKey, setGoogleApiKey] = useState('');
+  const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [revealApiKey, setRevealApiKey] = useState(false);
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -298,6 +302,13 @@ export default function TategakiEditor() {
   const generateAIText = async () => {
     if (!editorRef.current || isGenerating || !promptText.trim()) return;
 
+    // APIキー未設定なら設定ダイアログを開く
+    if (!googleApiKey) {
+      setShowPromptDialog(false);
+      setShowApiKeyDialog(true);
+      return;
+    }
+
     setIsGenerating(true);
     setShowPromptDialog(false);
     
@@ -312,7 +323,8 @@ export default function TategakiEditor() {
         body: JSON.stringify({ 
           userPrompt: promptText,
           context: context,
-          model: aiModel 
+          model: aiModel,
+          apiKey: googleApiKey,
         }),
       });
 
@@ -601,6 +613,12 @@ export default function TategakiEditor() {
       setShowIntroDialog(true);
     }
 
+    // 保存済みAPIキーを読み込み
+    const storedKey = localStorage.getItem('tategaki-google-api-key') || '';
+    if (storedKey) {
+      setGoogleApiKey(storedKey);
+    }
+
     if (editorRef.current) {
       // 初期化時にも統計を更新
       setTimeout(() => {
@@ -627,6 +645,20 @@ export default function TategakiEditor() {
       editorRef.current?.focus();
       moveCursorToEnd();
     }, 100);
+  };
+
+  // APIキー保存
+  const saveApiKey = () => {
+    const trimmed = apiKeyInput.trim();
+    if (!trimmed) {
+      localStorage.removeItem('tategaki-google-api-key');
+      setGoogleApiKey('');
+      setShowApiKeyDialog(false);
+      return;
+    }
+    localStorage.setItem('tategaki-google-api-key', trimmed);
+    setGoogleApiKey(trimmed);
+    setShowApiKeyDialog(false);
   };
 
   return (
@@ -778,6 +810,19 @@ export default function TategakiEditor() {
               <option value="gemini-1.5-pro">Pro</option>
               <option value="gemini-2.0-flash-exp">2.0 Flash</option>
             </select>
+
+            {/* APIキー設定ボタン */}
+            <button
+              onClick={() => {
+                setApiKeyInput(googleApiKey);
+                setRevealApiKey(false);
+                setShowApiKeyDialog(true);
+              }}
+              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+              title={googleApiKey ? 'Google APIキーを変更' : 'Google APIキーを設定'}
+            >
+              🔑
+            </button>
             
             {/* サービス紹介ボタン */}
             <button
@@ -928,7 +973,7 @@ export default function TategakiEditor() {
           
       {/* ヘルプダイアログ */}
       {showHelp && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 text-black">
           <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-gray-800">ショートカットキー</h3>
@@ -969,11 +1014,14 @@ export default function TategakiEditor() {
                           
             <div className="mt-6 p-3 bg-yellow-50 border border-yellow-200 rounded text-xs">
               <strong>AI生成について:</strong><br/>
-              AIを使用するには、環境変数にGOOGLE_GENERATIVE_AI_API_KEYを設定してください。
+              右上の🔑ボタンからGoogle APIキーを設定してください。
               <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline ml-1">
                 API キーを取得
               </a>
-                        </div>
+              <div className="mt-2 text-gray-600">
+                キーはブラウザのLocal Storageに保存され、次回以降も利用できます。
+              </div>
+            </div>
                         
             <div className="mt-4 flex justify-end">
                           <button
@@ -1065,11 +1113,92 @@ export default function TategakiEditor() {
               >
                 さっそく執筆を始める
               </button>
+              <button
+                onClick={() => {
+                  setApiKeyInput(googleApiKey);
+                  setRevealApiKey(false);
+                  setShowApiKeyDialog(true);
+                }}
+                className="flex-1 border border-gray-300 text-gray-800 px-6 py-3 rounded-xl font-semibold hover:bg-gray-50 transition-all duration-200"
+              >
+                🔑 APIキーを設定
+              </button>
             </div>
 
             {/* フッター */}
             <div className="text-center mt-6 text-xs text-gray-500">
               完全無料でご利用いただけます 🎉
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* APIキー設定ダイアログ */}
+      {showApiKeyDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl text-black">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-800">Google APIキー設定</h3>
+              <button
+                onClick={() => setShowApiKeyDialog(false)}
+                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+                aria-label="閉じる"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="space-y-3">
+              <p className="text-sm text-gray-700">
+                Google Gemini を利用するための API キーを入力してください。
+                <a
+                  href="https://aistudio.google.com/app/apikey"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 underline ml-1"
+                >
+                  キーを取得
+                </a>
+              </p>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">APIキー</label>
+                <div className="flex gap-2">
+                  <input
+                    type={revealApiKey ? 'text' : 'password'}
+                    value={apiKeyInput}
+                    onChange={(e) => setApiKeyInput(e.target.value)}
+                    className="flex-1 p-2 border border-gray-300 rounded text-black"
+                    placeholder="AIza..."
+                    autoFocus
+                  />
+                  <button
+                    onClick={() => setRevealApiKey(v => !v)}
+                    className="px-2 border border-gray-300 rounded text-xs text-gray-700 hover:bg-gray-100"
+                    title={revealApiKey ? '非表示' : '表示'}
+                  >
+                    {revealApiKey ? '🙈' : '👁️'}
+                  </button>
+                </div>
+                {googleApiKey && (
+                  <div className="mt-1 text-xs text-gray-600">現在、保存済みのキーが設定されています。</div>
+                )}
+              </div>
+              <div className="text-xs text-gray-600 bg-blue-50 border border-blue-200 p-2 rounded">
+                キーはこのブラウザの Local Storage にのみ保存され、サーバーには保存されません。
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setShowApiKeyDialog(false)}
+                className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-100"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={saveApiKey}
+                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+              >
+                保存
+              </button>
             </div>
           </div>
         </div>

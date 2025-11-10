@@ -13,6 +13,15 @@
     <meta name="twitter:card" content="summary_large_image">
     <!-- その他のメタ情報 -->
     <meta name="description" content="シンプルな縦書きエディタです。">
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-9QRBL9RQ90"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+
+      gtag('config', 'G-9QRBL9RQ90');
+    </script>
     <style>
         body {
             font-family: 'Noto Serif JP', serif;
@@ -244,23 +253,15 @@
                 const raw = (event.target.result || '').toString();
                 const normalized = raw.replace(/\r\n?/g, '\n');
 
-                // 区切り検出（専用セパレータ優先、次に区切り線・連続改行）
+                // 区切り検出（専用セパレータ優先、次に区切り線）。空行では分割しない
                 const sentinelRe = /\n?\s*===\s*tategaki:page-break\s*===\s*\n?/i;
                 const hrLineRe = /\n\s*(?:-{3,}|={3,})\s*\n/;
-                const tripleNlRe = /\n{3,}/;
 
                 let parts = [normalized];
                 if (sentinelRe.test(normalized)) {
                     parts = normalized.split(sentinelRe);
                 } else if (hrLineRe.test(normalized)) {
                     parts = normalized.split(hrLineRe);
-                } else if (tripleNlRe.test(normalized)) {
-                    parts = normalized.split(tripleNlRe);
-                } else {
-                    const doubleNlRe = /\n{2}/;
-                    if (doubleNlRe.test(normalized)) {
-                        parts = normalized.split(doubleNlRe);
-                    }
                 }
 
                 // pagesはプレーンテキスト（\n）で保持
