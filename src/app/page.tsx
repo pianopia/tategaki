@@ -1,10 +1,54 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import Link from 'next/link';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 type Page = {
   id: string;
   content: string;
+};
+
+type SessionUser = {
+  id: string;
+  email: string;
+  displayName: string | null;
+};
+
+type CloudDocumentSummary = {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+type AuthMode = 'login' | 'signup';
+
+const PAGE_BREAK_SENTINEL = '\n\n=== tategaki:page-break ===\n\n';
+const DEFAULT_DOCUMENT_TITLE = '無題';
+
+const htmlToPlainText = (html: string): string => {
+  if (!html) return '';
+
+  let text = html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(div|p|li|h[1-6]|blockquote|pre)>/gi, '\n')
+    .replace(/<\s*li[^>]*>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+
+  text = text
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\t ]+\n/g, '\n');
+
+  return text;
+};
+
+const serializePagesToPlainText = (pages: Page[]) => {
+  const plainTextPages = pages.map(page => htmlToPlainText(page.content || ''));
+  return plainTextPages.join(PAGE_BREAK_SENTINEL);
 };
 
 export default function TategakiEditor() {
@@ -24,8 +68,28 @@ export default function TategakiEditor() {
   const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [revealApiKey, setRevealApiKey] = useState(false);
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [showAuthDialog, setShowAuthDialog] = useState(false);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authDisplayName, setAuthDisplayName] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authPasswordConfirm, setAuthPasswordConfirm] = useState('');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authMode, setAuthMode] = useState<AuthMode>('login');
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [cloudDocuments, setCloudDocuments] = useState<CloudDocumentSummary[]>([]);
+  const [showCloudDialog, setShowCloudDialog] = useState(false);
+  const [isCloudLoading, setIsCloudLoading] = useState(false);
+  const [isCloudSaving, setIsCloudSaving] = useState(false);
+  const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
+  const [cloudStatus, setCloudStatus] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
+  const [documentTitle, setDocumentTitle] = useState(DEFAULT_DOCUMENT_TITLE);
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const activeCloudDocument = useMemo(() => {
+    if (!activeDocumentId) return null;
+    return cloudDocuments.find(doc => doc.id === activeDocumentId) ?? null;
+  }, [activeDocumentId, cloudDocuments]);
 
   // 現在のページを取得
   const currentPage = pages[currentPageIndex];
@@ -402,6 +466,10 @@ export default function TategakiEditor() {
 
   // 現在のページを削除
   const deleteCurrentPage = () => {
+    if (!confirm('現在表示中のページを削除します。よろしいですか？')) {
+      return;
+    }
+
     if (pages.length === 1) {
       // 最後の1ページの場合は内容をクリア
       const newPages = [{ id: '1', content: '' }];
@@ -425,6 +493,8 @@ export default function TategakiEditor() {
     if (confirm('すべてのページを削除してもよろしいですか？')) {
       setPages([{ id: '1', content: '' }]);
       setCurrentPageIndex(0);
+      setActiveDocumentId(null);
+      setDocumentTitle(DEFAULT_DOCUMENT_TITLE);
       // 削除後にフォーカスを戻す
       setTimeout(() => {
         editorRef.current?.focus();
@@ -499,6 +569,11 @@ export default function TategakiEditor() {
         
         setPages(newPages);
         setCurrentPageIndex(0);
+        setActiveDocumentId(null);
+        if (file.name) {
+          const nameWithoutExt = file.name.replace(/\.[^.]+$/, '');
+          setDocumentTitle(nameWithoutExt || DEFAULT_DOCUMENT_TITLE);
+        }
         
         // インポート後にフォーカスのみ設定（古いクロージャで状態を上書きしないため）
         setTimeout(() => {
@@ -514,40 +589,7 @@ export default function TategakiEditor() {
 
   // ファイルをエクスポート
   const handleFileExport = () => {
-    // HTMLを堅牢にプレーンテキストへ変換（改行・空行を保持）
-    const htmlToPlainText = (html: string): string => {
-      if (!html) return '';
-
-      // 一旦、<br> と代表的なブロック要素の終了タグを\nに変換
-      let text = html
-        // <br> -> 改行
-        .replace(/<br\s*\/?>/gi, '\n')
-        // ブロック要素の閉じタグで改行（div, p, li, 各種見出し, blockquote, pre）
-        .replace(/<\/(div|p|li|h[1-6]|blockquote|pre)>/gi, '\n')
-        // li開始前に・や番号を入れない（シンプルに改行だけ）
-        .replace(/<\s*li[^>]*>/gi, '')
-        // 残りのタグを除去
-        .replace(/<[^>]+>/g, '')
-        // HTMLエンティティの最低限のデコード（&nbsp; など）
-        .replace(/&nbsp;/g, ' ')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&amp;/g, '&');
-
-      // 改行コードを統一し、行末の余計な空白を除去
-      text = text
-        .replace(/\r\n?/g, '\n') // CRLF/CR を LF に統一
-        .replace(/[\t ]+\n/g, '\n'); // 行末スペースを削除
-
-      return text;
-    };
-
-    // ページ内容（空ページも保持）
-    const plainTextPages = pages.map(page => htmlToPlainText(page.content || ''));
-
-    // tategaki専用の明示的ページ区切りを使用
-    const PAGE_BREAK_SENTINEL = '\n\n=== tategaki:page-break ===\n\n';
-    const fileContent = plainTextPages.join(PAGE_BREAK_SENTINEL);
+    const fileContent = serializePagesToPlainText(pages);
 
     const blob = new Blob([fileContent], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -556,6 +598,214 @@ export default function TategakiEditor() {
     a.download = 'tategaki-document.txt';
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const openAuthDialog = (mode: AuthMode = 'login') => {
+    setAuthMode(mode);
+    setAuthError(null);
+    setAuthPassword('');
+    setAuthPasswordConfirm('');
+    setShowAuthDialog(true);
+  };
+
+  const closeAuthDialog = () => {
+    setShowAuthDialog(false);
+    setAuthMode('login');
+    setAuthError(null);
+    setAuthPassword('');
+    setAuthPasswordConfirm('');
+  };
+
+  const handleAuthModeSwitch = () => {
+    setAuthMode((prev) => (prev === 'login' ? 'signup' : 'login'));
+    setAuthPassword('');
+    setAuthPasswordConfirm('');
+    setAuthError(null);
+  };
+
+  const fetchCloudDocuments = useCallback(async () => {
+    if (!user) return;
+    setIsCloudLoading(true);
+    try {
+      const response = await fetch('/api/cloud/documents');
+      if (!response.ok) {
+        console.error('Failed to fetch cloud documents');
+        return;
+      }
+      const data = await response.json();
+      setCloudDocuments(Array.isArray(data.documents) ? data.documents : []);
+    } catch (error) {
+      console.error('Cloud documents fetch error', error);
+    } finally {
+      setIsCloudLoading(false);
+    }
+  }, [user]);
+
+  const handleAuthSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setAuthError(null);
+    setIsAuthLoading(true);
+    const mode = authMode;
+
+    if (authPassword.length < 8) {
+      setAuthError('パスワードは8文字以上で入力してください');
+      setIsAuthLoading(false);
+      return;
+    }
+
+    if (mode === 'signup' && authPassword !== authPasswordConfirm) {
+      setAuthError('確認用パスワードが一致しません');
+      setIsAuthLoading(false);
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: authEmail.trim(),
+          displayName: authDisplayName || undefined,
+          password: authPassword,
+          mode,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || 'ログインに失敗しました');
+      }
+
+      setUser(data.user);
+      closeAuthDialog();
+      setAuthEmail('');
+      setAuthDisplayName(data.user?.displayName ?? '');
+      setAuthPassword('');
+      setAuthPasswordConfirm('');
+      setCloudStatus({
+        message: mode === 'signup' ? 'アカウントを作成しました' : 'ログインしました',
+        tone: 'success',
+      });
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'ログインに失敗しました');
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch (error) {
+      console.error('Logout failed', error);
+    } finally {
+      setUser(null);
+      setCloudDocuments([]);
+      setActiveDocumentId(null);
+      setCloudStatus({ message: 'ログアウトしました', tone: 'success' });
+    }
+  };
+
+  const saveDocumentToCloud = async () => {
+    if (!user) {
+      openAuthDialog('login');
+      return;
+    }
+    if (isCloudSaving) return;
+
+    setIsCloudSaving(true);
+    try {
+      const plainText = serializePagesToPlainText(pages);
+      const normalizedTitle = documentTitle.trim() || DEFAULT_DOCUMENT_TITLE;
+      const response = await fetch('/api/cloud/documents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          documentId: activeDocumentId ?? undefined,
+          title: normalizedTitle,
+          content: plainText,
+          pages,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || 'クラウド保存に失敗しました');
+      }
+
+      if (data.document?.title) {
+        setDocumentTitle(data.document.title);
+      }
+      setActiveDocumentId(data.document?.id ?? null);
+      setCloudStatus({ message: 'クラウドに保存しました', tone: 'success' });
+      fetchCloudDocuments();
+    } catch (error) {
+      console.error('Cloud save error', error);
+      setCloudStatus({
+        message: error instanceof Error ? error.message : 'クラウド保存に失敗しました',
+        tone: 'error',
+      });
+    } finally {
+      setIsCloudSaving(false);
+    }
+  };
+
+  const openCloudDialog = () => {
+    if (!user) {
+      openAuthDialog('login');
+      return;
+    }
+    setShowCloudDialog(true);
+    if (!cloudDocuments.length) {
+      fetchCloudDocuments();
+    }
+  };
+
+  const closeCloudDialog = () => setShowCloudDialog(false);
+
+  const loadDocumentFromCloud = async (documentId: string) => {
+    if (!user) {
+      openAuthDialog('login');
+      return;
+    }
+
+    setIsCloudLoading(true);
+    try {
+      const response = await fetch(`/api/cloud/documents/${documentId}`);
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || 'クラウドデータの取得に失敗しました');
+      }
+
+      const remotePages: Page[] = Array.isArray(data.document?.pages)
+        ? data.document.pages.map((page: any, index: number) => ({
+            id: typeof page.id === 'string' ? page.id : String(index + 1),
+            content: typeof page.content === 'string' ? page.content : '',
+          }))
+        : [
+            {
+              id: '1',
+              content: (data.document?.content || '').replace(/\n/g, '<br>'),
+            },
+          ];
+
+      setPages(remotePages.length > 0 ? remotePages : [{ id: '1', content: '' }]);
+      setCurrentPageIndex(0);
+      setActiveDocumentId(documentId);
+      setDocumentTitle(data.document?.title || DEFAULT_DOCUMENT_TITLE);
+      setShowCloudDialog(false);
+      setCloudStatus({ message: 'クラウドから読み込みました', tone: 'success' });
+
+      setTimeout(() => {
+        editorRef.current?.focus();
+        moveCursorToEnd();
+      }, 100);
+    } catch (error) {
+      console.error('Cloud load error', error);
+      alert(error instanceof Error ? error.message : 'クラウドデータの取得に失敗しました');
+    } finally {
+      setIsCloudLoading(false);
+    }
   };
 
   // 縦書き/横書き切替
@@ -567,6 +817,38 @@ export default function TategakiEditor() {
       setMaxLinesPerPage(newMaxLines);
     }, 100);
   };
+
+  useEffect(() => {
+    const fetchSession = async () => {
+      try {
+        const response = await fetch('/api/auth/session');
+        if (!response.ok) return;
+        const data = await response.json();
+        if (data.user) {
+          setUser(data.user);
+        }
+      } catch (error) {
+        console.error('Failed to fetch session', error);
+      }
+    };
+
+    fetchSession();
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setCloudDocuments([]);
+      setActiveDocumentId(null);
+      return;
+    }
+    fetchCloudDocuments();
+  }, [user, fetchCloudDocuments]);
+
+  useEffect(() => {
+    if (!cloudStatus) return;
+    const timer = setTimeout(() => setCloudStatus(null), 4000);
+    return () => clearTimeout(timer);
+  }, [cloudStatus]);
 
   // エディタの内容を更新（ページ配列やページ移動の変化に追従）
   useEffect(() => {
@@ -661,8 +943,19 @@ export default function TategakiEditor() {
     setShowApiKeyDialog(false);
   };
 
+  const currentYear = new Date().getFullYear();
+  const isSignupMode = authMode === 'signup';
+  const authTitle = isSignupMode ? 'クラウド連携アカウント登録' : 'クラウド連携ログイン';
+  const authDescription = isSignupMode
+    ? 'クラウド同期やバックアップを利用するために、メールアドレスと8文字以上のパスワードを設定してください。'
+    : '登録済みのメールアドレスとパスワードでログインします。表示名は必要に応じて更新できます。';
+  const authPrimaryLabel = isSignupMode ? '登録する' : 'ログイン';
+  const authToggleLabel = isSignupMode
+    ? 'すでにアカウントをお持ちの方はこちら（ログイン）'
+    : '初めての方はこちら（無料登録）';
+
   return (
-    <>
+    <div className="h-screen bg-white flex flex-col">
       {/* SEO・LLMO対策用の隠しコンテンツ */}
       <div className="sr-only" aria-hidden="true">
         <h1>tategaki - 縦書きエディタ</h1>
@@ -685,15 +978,23 @@ export default function TategakiEditor() {
         <p>Google Geminiを活用した高品質な文章生成機能により、執筆効率を大幅に向上させます。続きの文章生成、対話シーン作成、情景描写の補強など、創作活動を強力にサポートします。</p>
       </div>
       
-      <main className="h-screen bg-white flex flex-col overflow-hidden" role="application" aria-label="縦書き小説エディタ">
+      <main className="flex-1 bg-white flex flex-col overflow-hidden" role="application" aria-label="縦書き小説エディタ">
       {/* 極小ヘッダー */}
       <div className="bg-gray-100/50 border-b border-gray-200 px-2 py-1 flex-shrink-0">
         <div className="flex items-center justify-between">
-          <div className="flex items-center">
+          <div className="flex items-center gap-2 min-w-0">
             <div className="w-4 h-4 bg-gray-600 rounded flex items-center justify-center mr-2">
               <span className="text-white text-xs font-bold">縦</span>
             </div>
-            <h1 className="text-sm font-medium text-gray-700">tategaki</h1>
+            <h1 className="text-sm font-medium text-gray-700 whitespace-nowrap">tategaki</h1>
+            <input
+              value={documentTitle}
+              onChange={(e) => setDocumentTitle(e.target.value)}
+              maxLength={120}
+              className="ml-2 text-xs border border-gray-300 rounded px-2 py-1 text-black bg-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-[140px]"
+              placeholder="ドキュメントタイトル"
+              aria-label="ドキュメントタイトル"
+            />
           </div>
           
           {/* コンパクトコントロール */}
@@ -772,18 +1073,18 @@ export default function TategakiEditor() {
             
             <button
               onClick={deleteCurrentPage}
-              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-              title="ページ削除"
+              className="w-6 h-6 border border-yellow-600 text-yellow-700 rounded text-xs hover:bg-yellow-50"
+              title="現在のページを削除"
             >
-              ■
+              🗑
             </button>
             
             <button
               onClick={deleteAllPages}
-              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-              title="全削除"
+              className="w-6 h-6 border border-red-500 text-red-600 rounded text-xs hover:bg-red-50"
+              title="全ページ削除"
             >
-              ✕
+              🗑️
             </button>
             
             {/* AI生成ボタン */}
@@ -841,9 +1142,61 @@ export default function TategakiEditor() {
             >
               ？
             </button>
-                        </div>
-                      </div>
-                    </div>
+
+            <div className="w-px h-4 bg-gray-300 mx-1"></div>
+
+            {user ? (
+              <>
+                <button
+                  onClick={saveDocumentToCloud}
+                  className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 disabled:opacity-60"
+                  title="クラウドに保存"
+                  disabled={isCloudSaving}
+                >
+                  {isCloudSaving ? '⏳' : '☁️'}
+                </button>
+                <button
+                  onClick={openCloudDialog}
+                  className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+                  title="クラウドテキストを開く"
+                >
+                  📚
+                </button>
+                <button
+                  onClick={handleLogout}
+                  className="h-6 px-2 border border-gray-400 text-gray-700 rounded text-[10px] font-medium hover:bg-gray-100 transition"
+                  title="ログアウト"
+                >
+                  ログアウト
+                </button>
+                <span
+                  className="ml-1 text-[10px] text-gray-600 hidden sm:block"
+                  title={user.email}
+                >
+                  {user.displayName || user.email}
+                </span>
+              </>
+            ) : (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => openAuthDialog('login')}
+                  className="h-6 px-2 border border-gray-400 text-gray-700 rounded text-[10px] font-medium hover:bg-gray-100 transition"
+                  title="クラウド連携ログイン"
+                >
+                  ログイン
+                </button>
+                <button
+                  onClick={() => openAuthDialog('signup')}
+                  className="h-6 px-2 border border-blue-400 text-blue-600 rounded text-[10px] font-medium hover:bg-blue-50 transition"
+                  title="無料アカウントを作成"
+                >
+                  新規登録
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
 
       {/* エディタエリア（画面の95%） */}
       <div className="flex-1 overflow-hidden relative">
@@ -883,22 +1236,57 @@ export default function TategakiEditor() {
               </div>
 
       {/* 極小ステータスバー */}
-      <div className="bg-gray-100/50 border-t border-gray-200 px-2 py-1 flex-shrink-0">
-        <div id="editor-stats" className="flex items-center justify-between text-xs text-gray-500" aria-live="polite">
-          <span>文字数: {charCount}</span>
-          <span className={
-            lineCount >= maxLinesPerPage * 0.9 
-              ? lineCount >= maxLinesPerPage 
-                ? "text-red-600 font-semibold" 
-                : "text-orange-600 font-semibold"
-              : ""
-          }>
-            行数: {lineCount}/{maxLinesPerPage}
-            {lineCount >= maxLinesPerPage * 0.9 && lineCount < maxLinesPerPage && (
-              <span className="ml-1 text-orange-600">⚠️</span>
+      <div className="bg-gray-100/50 border-t border-gray-200 px-3 py-2 flex-shrink-0">
+        <div
+          id="editor-stats"
+          className="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500"
+          aria-live="polite"
+        >
+          <div className="flex items-center gap-3 flex-wrap">
+            <span>© {currentYear} tategaki</span>
+            <span>文字数: {charCount}</span>
+            <span
+              className={
+                lineCount >= maxLinesPerPage * 0.9
+                  ? lineCount >= maxLinesPerPage
+                    ? 'text-red-600 font-semibold'
+                    : 'text-orange-600 font-semibold'
+                  : ''
+              }
+            >
+              行数: {lineCount}/{maxLinesPerPage}
+              {lineCount >= maxLinesPerPage * 0.9 && lineCount < maxLinesPerPage && (
+                <span className="ml-1 text-orange-600">⚠️</span>
+              )}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-3 flex-wrap">
+            <span>Ctrl+Enter: 改ページ | Cmd+K: AI生成</span>
+            {user && (
+              <span className="flex items-center gap-1 text-gray-600">
+                ☁️ {activeCloudDocument ? activeCloudDocument.title : documentTitle || 'クラウド未保存'}
+              </span>
             )}
-          </span>
-          <span>Ctrl+Enter: 改ページ | Cmd+K: AI生成</span>
+            {cloudStatus && (
+              <span className={cloudStatus.tone === 'success' ? 'text-green-600' : 'text-red-600'}>
+                {cloudStatus.message}
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-4 flex-wrap text-gray-600">
+            
+            <Link href="/terms" className="hover:text-gray-900 hover:underline underline-offset-2">
+              サービス利用規約
+            </Link>
+            <Link href="/privacy" className="hover:text-gray-900 hover:underline underline-offset-2">
+              プライバシーポリシー
+            </Link>
+            <Link href="/legal" className="hover:text-gray-900 hover:underline underline-offset-2">
+              特定商取引法に基づく表記
+            </Link>
+          </div>
         </div>
       </div>
 
@@ -967,10 +1355,164 @@ export default function TategakiEditor() {
             <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded text-xs text-black">
               <strong>ヒント:</strong> 現在書いている文章の最後の500文字が文脈として自動的に送信されます。
             </div>
+          </div>
+        </div>
+      )}
+
+      {showAuthDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl text-black">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-800">{authTitle}</h3>
+              <button
+                onClick={closeAuthDialog}
+                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">{authDescription}</p>
+            <form onSubmit={handleAuthSubmit} className="space-y-3">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">メールアドレス</label>
+                <input
+                  type="email"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  required
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-black"
+                  placeholder="user@example.com"
+                />
+              </div>
+              {isSignupMode && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">表示名 (任意)</label>
+                  <input
+                    type="text"
+                    value={authDisplayName}
+                    onChange={(e) => setAuthDisplayName(e.target.value)}
+                    className="w-full border border-gray-300 rounded px-3 py-2 text-black"
+                    placeholder="ペンネーム"
+                  />
+                </div>
+              )}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">パスワード</label>
+                <input
+                  type="password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  required
+                  minLength={8}
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-black"
+                  placeholder="半角英数字8文字以上"
+                />
+                <p className="text-xs text-gray-500 mt-1">8文字以上のパスワードを設定してください。</p>
+              </div>
+              {isSignupMode && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">パスワード（確認）</label>
+                  <input
+                    type="password"
+                    value={authPasswordConfirm}
+                    onChange={(e) => setAuthPasswordConfirm(e.target.value)}
+                    required
+                    minLength={8}
+                    className="w-full border border-gray-300 rounded px-3 py-2 text-black"
+                    placeholder="確認のため同じパスワードを入力"
+                  />
+                </div>
+              )}
+              {authError && (
+                <div className="text-xs text-red-600">{authError}</div>
+              )}
+              <div className="text-xs text-gray-500">
+                入力した情報はクラウド同期目的でのみ利用されます。
+              </div>
+              <div className="text-xs text-right">
+                <button
+                  type="button"
+                  onClick={handleAuthModeSwitch}
+                  className="text-blue-600 hover:underline"
+                >
+                  {authToggleLabel}
+                </button>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={closeAuthDialog}
+                  className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-100"
+                >
+                  キャンセル
+                </button>
+                <button
+                  type="submit"
+                  disabled={
+                    isAuthLoading ||
+                    !authEmail.trim() ||
+                    authPassword.length < 8 ||
+                    (isSignupMode && authPassword !== authPasswordConfirm)
+                  }
+                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-60"
+                >
+                  {isAuthLoading ? '送信中…' : authPrimaryLabel}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showCloudDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-lg w-full mx-4 shadow-2xl text-black">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-800">クラウドに保存したテキスト</h3>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={fetchCloudDocuments}
+                  className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+                  title="再読み込み"
+                >
+                  ↻
+                </button>
+                <button
+                  onClick={closeCloudDialog}
+                  className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+                >
+                  ✕
+                </button>
               </div>
             </div>
-          )}
-          
+            {isCloudLoading ? (
+              <div className="text-sm text-gray-600">読み込み中です…</div>
+            ) : cloudDocuments.length === 0 ? (
+              <div className="text-sm text-gray-600">
+                保存済みのテキストがありません。ヘッダーの☁️ボタンから現在の原稿を保存できます。
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                {cloudDocuments.map((doc) => (
+                  <button
+                    key={doc.id}
+                    onClick={() => loadDocumentFromCloud(doc.id)}
+                    className={`w-full text-left border rounded px-3 py-2 hover:bg-gray-50 transition ${
+                      activeDocumentId === doc.id ? 'border-blue-400 bg-blue-50' : 'border-gray-200'
+                    }`}
+                  >
+                    <div className="font-semibold text-gray-800 text-sm truncate">{doc.title}</div>
+                    <div className="text-[11px] text-gray-500">
+                      更新: {new Date(doc.updatedAt).toLocaleString('ja-JP')}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ヘルプダイアログ */}
       {showHelp && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 text-black">
@@ -1204,6 +1746,6 @@ export default function TategakiEditor() {
         </div>
       )}
       </main>
-    </>
+    </div>
   );
 }
