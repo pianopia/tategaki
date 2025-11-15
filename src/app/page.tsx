@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FiEye, FiTrash, FiTrash2 } from 'react-icons/fi';
 
 type Page = {
   id: string;
@@ -84,6 +85,16 @@ export default function TategakiEditor() {
   const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
   const [cloudStatus, setCloudStatus] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
   const [documentTitle, setDocumentTitle] = useState(DEFAULT_DOCUMENT_TITLE);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const titleInputRef = useRef<HTMLInputElement>(null);
+  const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null);
+  const [previewDocument, setPreviewDocument] = useState<{
+    title: string;
+    content: string;
+    updatedAt: number;
+  } | null>(null);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const [previewingDocumentId, setPreviewingDocumentId] = useState<string | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeCloudDocument = useMemo(() => {
@@ -189,12 +200,7 @@ export default function TategakiEditor() {
     console.log('Plain text length:', plainText.length);
     
     if (isVertical) {
-      // 縦書きの場合：文字数ベースで列数を計算
-      // 空行も考慮して改行文字を含めた計算
       const lines = plainText.split('\n');
-      const totalChars = lines.reduce((sum, line) => sum + Math.max(1, line.length), 0);
-      
-      // 1列あたりの最大文字数（画面の高さに基づく）
       const rect = editorRef.current.getBoundingClientRect();
       const style = window.getComputedStyle(editorRef.current);
       const paddingTop = parseFloat(style.paddingTop) || 0;
@@ -202,11 +208,26 @@ export default function TategakiEditor() {
       const contentHeight = rect.height - paddingTop - paddingBottom;
       const fontSize = parseFloat(style.fontSize) || 18;
       const lineHeight = parseFloat(style.lineHeight) || fontSize * 1.5;
-      const maxCharsPerColumn = Math.floor(contentHeight / lineHeight);
-      
-      const columnCount = Math.ceil(totalChars / maxCharsPerColumn);
-      console.log('Vertical mode - totalChars:', totalChars, 'maxCharsPerColumn:', maxCharsPerColumn, 'columnCount:', columnCount);
-      return columnCount;
+      const maxCharsPerColumn = Math.max(1, Math.floor(contentHeight / lineHeight));
+
+      const columnCount = lines.reduce((sum, line) => {
+        const charCount = line.length;
+        if (charCount === 0) {
+          return sum + 1;
+        }
+        const requiredColumns = Math.ceil(charCount / maxCharsPerColumn);
+        return sum + Math.max(1, requiredColumns);
+      }, 0);
+
+      console.log(
+        'Vertical mode - lines:',
+        lines.length,
+        'maxCharsPerColumn:',
+        maxCharsPerColumn,
+        'columnCount:',
+        columnCount
+      );
+      return Math.max(1, columnCount);
     } else {
       // 横書きの場合：行数ベース
       const lines = plainText.split('\n');
@@ -504,6 +525,16 @@ export default function TategakiEditor() {
   };
 
   // ファイルをインポート
+  const finishTitleEditing = () => {
+    const normalizedTitle = documentTitle.trim();
+    setDocumentTitle(normalizedTitle || DEFAULT_DOCUMENT_TITLE);
+    setIsEditingTitle(false);
+  };
+
+  const closePreviewDialog = () => {
+    setPreviewDocument(null);
+  };
+
   const handleFileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
@@ -795,6 +826,7 @@ export default function TategakiEditor() {
       setDocumentTitle(data.document?.title || DEFAULT_DOCUMENT_TITLE);
       setShowCloudDialog(false);
       setCloudStatus({ message: 'クラウドから読み込みました', tone: 'success' });
+      setIsEditingTitle(false);
 
       setTimeout(() => {
         editorRef.current?.focus();
@@ -805,6 +837,82 @@ export default function TategakiEditor() {
       alert(error instanceof Error ? error.message : 'クラウドデータの取得に失敗しました');
     } finally {
       setIsCloudLoading(false);
+    }
+  };
+
+  const deleteDocumentFromCloud = async (documentId: string) => {
+    if (!user) {
+      openAuthDialog('login');
+      return;
+    }
+    if (!confirm('このクラウドドキュメントを削除します。よろしいですか？')) {
+      return;
+    }
+
+    setDeletingDocumentId(documentId);
+    try {
+      const response = await fetch(`/api/cloud/documents/${documentId}`, {
+        method: 'DELETE',
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || '削除に失敗しました');
+      }
+
+      if (activeDocumentId === documentId) {
+        setActiveDocumentId(null);
+        setCloudStatus({
+          message: 'クラウド保存されたデータを削除しました',
+          tone: 'success',
+        });
+      } else {
+        setCloudStatus({
+          message: 'クラウドデータを削除しました',
+          tone: 'success',
+        });
+      }
+
+      fetchCloudDocuments();
+    } catch (error) {
+      console.error('Cloud delete error', error);
+      setCloudStatus({
+        message: error instanceof Error ? error.message : '削除に失敗しました',
+        tone: 'error',
+      });
+    } finally {
+      setDeletingDocumentId(null);
+    }
+  };
+
+  const openDocumentPreview = async (documentId: string) => {
+    if (!user) {
+      openAuthDialog('login');
+      return;
+    }
+
+    setPreviewingDocumentId(documentId);
+    setIsPreviewLoading(true);
+    try {
+      const response = await fetch(`/api/cloud/documents/${documentId}`);
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || 'プレビューの取得に失敗しました');
+      }
+
+      setPreviewDocument({
+        title: data.document?.title || DEFAULT_DOCUMENT_TITLE,
+        content: data.document?.content || '',
+        updatedAt: data.document?.updatedAt ?? Date.now(),
+      });
+    } catch (error) {
+      console.error('Preview load error', error);
+      setCloudStatus({
+        message: error instanceof Error ? error.message : 'プレビューの取得に失敗しました',
+        tone: 'error',
+      });
+    } finally {
+      setIsPreviewLoading(false);
+      setPreviewingDocumentId(null);
     }
   };
 
@@ -986,15 +1094,35 @@ export default function TategakiEditor() {
             <div className="w-4 h-4 bg-gray-600 rounded flex items-center justify-center mr-2">
               <span className="text-white text-xs font-bold">縦</span>
             </div>
-            <h1 className="text-sm font-medium text-gray-700 whitespace-nowrap">tategaki</h1>
-            <input
-              value={documentTitle}
-              onChange={(e) => setDocumentTitle(e.target.value)}
-              maxLength={120}
-              className="ml-2 text-xs border border-gray-300 rounded px-2 py-1 text-black bg-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-[140px]"
-              placeholder="ドキュメントタイトル"
-              aria-label="ドキュメントタイトル"
-            />
+            <h1 className="text-sm font-medium text-gray-700 whitespace-nowrap mr-24">tategaki</h1>
+            {isEditingTitle ? (
+              <input
+                ref={titleInputRef}
+                value={documentTitle}
+                onChange={(e) => setDocumentTitle(e.target.value)}
+                onBlur={finishTitleEditing}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    finishTitleEditing();
+                  }
+                }}
+                maxLength={120}
+                className="ml-2 text-xs border border-blue-400 rounded px-2 py-1 text-black bg-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-[300px]"
+                placeholder="ドキュメントタイトル"
+                aria-label="ドキュメントタイトル編集"
+                autoFocus
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsEditingTitle(true)}
+                className="ml-2 text-sm font-semibold text-gray-800 truncate max-w-[200px] text-left hover:text-blue-600"
+                title="タイトルを編集"
+              >
+                {documentTitle || DEFAULT_DOCUMENT_TITLE}
+              </button>
+            )}
           </div>
           
           {/* コンパクトコントロール */}
@@ -1073,18 +1201,18 @@ export default function TategakiEditor() {
             
             <button
               onClick={deleteCurrentPage}
-              className="w-6 h-6 border border-yellow-600 text-yellow-700 rounded text-xs hover:bg-yellow-50"
+              className="w-6 h-6 border border-gray-400 text-yellow-500 rounded text-xs hover:bg-yellow-50 flex items-center justify-center"
               title="現在のページを削除"
             >
-              🗑
+              <FiTrash2 aria-hidden className="text-sm" />
             </button>
             
             <button
               onClick={deleteAllPages}
-              className="w-6 h-6 border border-red-500 text-red-600 rounded text-xs hover:bg-red-50"
+              className="w-6 h-6 border border-gray-400 text-red-600 rounded text-xs hover:bg-red-50 flex items-center justify-center"
               title="全ページ削除"
             >
-              🗑️
+              <FiTrash aria-hidden className="text-sm" />
             </button>
             
             {/* AI生成ボタン */}
@@ -1494,21 +1622,99 @@ export default function TategakiEditor() {
             ) : (
               <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
                 {cloudDocuments.map((doc) => (
-                  <button
+                  <div
                     key={doc.id}
                     onClick={() => loadDocumentFromCloud(doc.id)}
-                    className={`w-full text-left border rounded px-3 py-2 hover:bg-gray-50 transition ${
+                    className={`w-full border rounded px-3 py-2 hover:bg-gray-50 transition cursor-pointer ${
                       activeDocumentId === doc.id ? 'border-blue-400 bg-blue-50' : 'border-gray-200'
                     }`}
                   >
-                    <div className="font-semibold text-gray-800 text-sm truncate">{doc.title}</div>
-                    <div className="text-[11px] text-gray-500">
-                      更新: {new Date(doc.updatedAt).toLocaleString('ja-JP')}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-gray-800 text-sm truncate">
+                          {doc.title || DEFAULT_DOCUMENT_TITLE}
+                        </div>
+                        <div className="text-[11px] text-gray-500">
+                          更新: {new Date(doc.updatedAt).toLocaleString('ja-JP')}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openDocumentPreview(doc.id);
+                          }}
+                          disabled={isPreviewLoading && previewingDocumentId === doc.id}
+                          className="w-7 h-7 flex items-center justify-center border border-blue-300 text-blue-500 rounded text-xs hover:bg-blue-50 disabled:opacity-60"
+                          aria-label="クラウドドキュメントをプレビュー"
+                        >
+                          {isPreviewLoading && previewingDocumentId === doc.id ? (
+                            <span className="text-[11px]">…</span>
+                          ) : (
+                            <FiEye aria-hidden />
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            deleteDocumentFromCloud(doc.id);
+                          }}
+                          disabled={deletingDocumentId === doc.id}
+                          className="w-7 h-7 flex items-center justify-center border border-red-400 text-red-500 rounded text-xs hover:bg-red-50 disabled:opacity-60"
+                          aria-label="クラウドドキュメントを削除"
+                        >
+                          {deletingDocumentId === doc.id ? (
+                            <span className="text-[11px]">…</span>
+                          ) : (
+                            <FiTrash aria-hidden />
+                          )}
+                        </button>
+                      </div>
                     </div>
-                  </button>
+                  </div>
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {previewDocument && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-2xl w-full mx-4 shadow-2xl text-black">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-bold text-gray-800">プレビュー</h3>
+                <p className="text-xs text-gray-500">
+                  更新: {new Date(previewDocument.updatedAt).toLocaleString('ja-JP')}
+                </p>
+              </div>
+              <button
+                onClick={closePreviewDialog}
+                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+                aria-label="プレビューを閉じる"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="mb-4">
+              <h4 className="text-xl font-semibold text-gray-900 break-words">
+                {previewDocument.title || DEFAULT_DOCUMENT_TITLE}
+              </h4>
+            </div>
+            <div className="border border-gray-200 rounded-lg p-4 max-h-80 overflow-y-auto bg-gray-50 text-sm leading-relaxed whitespace-pre-wrap">
+              {previewDocument.content || '内容が空です。'}
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={closePreviewDialog}
+                className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+              >
+                閉じる
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1742,6 +1948,23 @@ export default function TategakiEditor() {
                 保存
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {cloudStatus && (
+        <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2">
+          <div
+            className={`min-w-[220px] max-w-sm rounded-lg px-4 py-3 text-sm shadow-xl border ${
+              cloudStatus.tone === 'success'
+                ? 'bg-green-50 text-green-800 border-green-200'
+                : 'bg-red-50 text-red-800 border-red-200'
+            }`}
+          >
+            <div className="font-semibold text-xs mb-1">
+              {cloudStatus.tone === 'success' ? 'クラウド保存' : 'エラー'}
+            </div>
+            <div>{cloudStatus.message}</div>
           </div>
         </div>
       )}
