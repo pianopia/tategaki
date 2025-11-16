@@ -26,6 +26,7 @@ type AuthMode = 'login' | 'signup';
 
 const PAGE_BREAK_SENTINEL = '\n\n=== tategaki:page-break ===\n\n';
 const DEFAULT_DOCUMENT_TITLE = '無題';
+const DEFAULT_MAX_LINES_PER_PAGE = 30;
 
 const htmlToPlainText = (html: string): string => {
   if (!html) return '';
@@ -58,7 +59,7 @@ export default function TategakiEditor() {
   const [isVertical, setIsVertical] = useState(true);
   const [charCount, setCharCount] = useState(0);
   const [lineCount, setLineCount] = useState(1);
-  const [maxLinesPerPage, setMaxLinesPerPage] = useState(25); // デフォルト値
+  const [maxLinesPerPage, setMaxLinesPerPage] = useState(DEFAULT_MAX_LINES_PER_PAGE); // 原稿用紙の基本行数
   const [showHelp, setShowHelp] = useState(false);
   const [showPromptDialog, setShowPromptDialog] = useState(false);
   const [showIntroDialog, setShowIntroDialog] = useState(false);
@@ -97,6 +98,8 @@ export default function TategakiEditor() {
   const [previewingDocumentId, setPreviewingDocumentId] = useState<string | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isMobileView, setIsMobileView] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const activeCloudDocument = useMemo(() => {
     if (!activeDocumentId) return null;
     return cloudDocuments.find(doc => doc.id === activeDocumentId) ?? null;
@@ -156,53 +159,43 @@ export default function TategakiEditor() {
   };
 
   // エディタのサイズを測定して1ページあたりの最大行数を計算する関数
-  const calculateMaxLinesPerPage = () => {
-    if (!editorRef.current) return 25; // デフォルト値
-    
-    const rect = editorRef.current.getBoundingClientRect();
-    const style = window.getComputedStyle(editorRef.current);
-    
-    // パディングを考慮した実際のコンテンツエリアの高さ
-    const paddingTop = parseFloat(style.paddingTop) || 0;
-    const paddingBottom = parseFloat(style.paddingBottom) || 0;
-    const contentHeight = rect.height - paddingTop - paddingBottom;
-    
-    // 行の高さを計算（line-heightから）
-    const lineHeight = parseFloat(style.lineHeight) || 
-                      parseFloat(style.fontSize) * 1.5; // fallback
-    
-    const maxLines = Math.floor(contentHeight / lineHeight);
-    
-    // 縦書きの場合は列数として計算する必要がある
-    if (isVertical) {
-      const paddingLeft = parseFloat(style.paddingLeft) || 0;
-      const paddingRight = parseFloat(style.paddingRight) || 0;
-      const contentWidth = rect.width - paddingLeft - paddingRight;
-      
-      // 縦書きでは文字の幅が重要
-      const fontSize = parseFloat(style.fontSize) || 18;
-      const charWidth = fontSize * 1.2; // 文字幅に余裕を持たせる
-      const columns = Math.floor(contentWidth / charWidth);
-      console.log('Vertical mode - contentWidth:', contentWidth, 'charWidth:', charWidth, 'columns:', columns);
-      return Math.max(5, columns - 1); // 最低5列、余裕を持って-1列
-    }
-    
-    const result = Math.max(10, maxLines - 2); // 最低10行、余裕を持って-2行
-    console.log('calculateMaxLinesPerPage result:', result, 'contentHeight:', contentHeight, 'lineHeight:', lineHeight);
-    return result;
-  };
+  const calculateMaxLinesPerPage = () => DEFAULT_MAX_LINES_PER_PAGE;
 
   // 実際のコンテンツ量を計算する関数（縦書き・横書き両対応）
   const calculateActualContentLines = () => {
     if (!editorRef.current) return 1;
-    
-    const plainText = editorRef.current.innerText || '';
-    console.log('Plain text length:', plainText.length);
-    
+
+    const element = editorRef.current;
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const rects = Array.from(range.getClientRects()).filter(
+      (rect) => rect.width > 0.5 && rect.height > 0.5
+    );
+
+    const tolerance = 1; // px
+    if (rects.length > 0) {
+      const positions: number[] = [];
+      rects.forEach((rect) => {
+        const position = isVertical ? rect.left : rect.top;
+        const exists = positions.some((pos) => Math.abs(pos - position) < tolerance);
+        if (!exists) {
+          positions.push(position);
+        }
+      });
+      if (positions.length > 0) {
+        console.log('Rendered line boxes detected:', positions.length);
+        return positions.length;
+      }
+    }
+
+    // fallback: use previous estimation based on text metrics
+    const plainText = element.innerText || '';
+    console.log('Fallback plain text length:', plainText.length);
+
     if (isVertical) {
       const lines = plainText.split('\n');
-      const rect = editorRef.current.getBoundingClientRect();
-      const style = window.getComputedStyle(editorRef.current);
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
       const paddingTop = parseFloat(style.paddingTop) || 0;
       const paddingBottom = parseFloat(style.paddingBottom) || 0;
       const contentHeight = rect.height - paddingTop - paddingBottom;
@@ -220,7 +213,7 @@ export default function TategakiEditor() {
       }, 0);
 
       console.log(
-        'Vertical mode - lines:',
+        'Fallback vertical mode - lines:',
         lines.length,
         'maxCharsPerColumn:',
         maxCharsPerColumn,
@@ -229,112 +222,96 @@ export default function TategakiEditor() {
       );
       return Math.max(1, columnCount);
     } else {
-      // 横書きの場合：行数ベース
       const lines = plainText.split('\n');
       const actualLineCount = lines.length;
-      console.log('Horizontal mode - actualLineCount:', actualLineCount);
-      return actualLineCount;
+      console.log('Fallback horizontal mode - actualLineCount:', actualLineCount);
+      return Math.max(1, actualLineCount);
     }
   };
 
-  // 自動ページ送り処理（複数ページにまたがる場合も対応）
+  // 自動ページ送り処理（画面上の実際の行数に合わせて動作）
   const handleAutoPageBreak = () => {
-    if (!editorRef.current) return;
-    
-    const actualLines = calculateActualContentLines();
-    console.log('Auto page break check - actualLines:', actualLines, 'maxLinesPerPage:', maxLinesPerPage);
-    
-    // 最大行数を超えた場合
-    if (actualLines > maxLinesPerPage) {
-      console.log('Triggering auto page break!');
-      
-      // テキストベースで分割処理を行う
-      const plainText = editorRef.current.innerText || '';
-      const lines = plainText.split('\n');
-      
-      let pageTexts: string[] = [];
-      let currentPageText = '';
-      let currentContentCount = 0;
-      
-      if (isVertical) {
-        // 縦書きの場合：文字数ベースで分割
-        const rect = editorRef.current.getBoundingClientRect();
-        const style = window.getComputedStyle(editorRef.current);
-        const paddingTop = parseFloat(style.paddingTop) || 0;
-        const paddingBottom = parseFloat(style.paddingBottom) || 0;
-        const contentHeight = rect.height - paddingTop - paddingBottom;
-        const fontSize = parseFloat(style.fontSize) || 18;
-        const lineHeight = parseFloat(style.lineHeight) || fontSize * 1.5;
-        const maxCharsPerPage = Math.floor(contentHeight / lineHeight) * maxLinesPerPage;
-        
-        for (const line of lines) {
-          const lineChars = Math.max(1, line.length);
-          
-          if (currentContentCount + lineChars > maxCharsPerPage && currentPageText) {
-            pageTexts.push(currentPageText.trim());
-            currentPageText = line;
-            currentContentCount = lineChars;
-          } else {
-            currentPageText += (currentPageText ? '\n' : '') + line;
-            currentContentCount += lineChars;
-          }
+    if (!editorRef.current || !currentPage) return;
+
+    let actualLines = calculateActualContentLines();
+    if (actualLines <= maxLinesPerPage) return;
+
+    const editor = editorRef.current;
+    const overflowContainer = document.createElement('div');
+
+    const prependNode = (node: Node) => {
+      overflowContainer.insertBefore(node, overflowContainer.firstChild);
+    };
+
+    const refreshLineCount = () => {
+      actualLines = calculateActualContentLines();
+    };
+
+    const peelLastNode = () => {
+      const target = editor.lastChild;
+      if (!target) return false;
+
+      if (target.nodeType === Node.TEXT_NODE) {
+        const textNode = target as Text;
+        let text = textNode.textContent || '';
+        let removed = '';
+
+        while (text.length > 0 && actualLines > maxLinesPerPage) {
+          const char = text.slice(-1);
+          text = text.slice(0, -1);
+          textNode.textContent = text;
+          removed = char + removed;
+          refreshLineCount();
         }
-      } else {
-        // 横書きの場合：行数ベースで分割
-        for (const line of lines) {
-          if (currentContentCount >= maxLinesPerPage && currentPageText) {
-            pageTexts.push(currentPageText.trim());
-            currentPageText = line;
-            currentContentCount = 1;
-          } else {
-            currentPageText += (currentPageText ? '\n' : '') + line;
-            currentContentCount++;
-          }
+
+        if (!text.length) {
+          editor.removeChild(textNode);
         }
-      }
-      
-      // 最後のページも追加
-      if (currentPageText) {
-        pageTexts.push(currentPageText.trim());
-      }
-      
-      console.log('Split into', pageTexts.length, 'pages');
-      
-      // ページデータを更新
-      const newPages = [...pages];
-      
-      // 現在のページを最初の分割ページで更新
-      if (pageTexts.length > 0) {
-        newPages[currentPageIndex] = { 
-          ...currentPage, 
-          content: pageTexts[0].replace(/\n/g, '<br>') 
-        };
-      }
-      
-      // 追加のページを作成
-      for (let i = 1; i < pageTexts.length; i++) {
-        const newPage: Page = {
-          id: (newPages.length + i).toString(),
-          content: pageTexts[i].replace(/\n/g, '<br>')
-        };
-        newPages.splice(currentPageIndex + i, 0, newPage);
-      }
-      
-      setPages(newPages);
-      
-      // 最後のページに移動
-      const lastNewPageIndex = currentPageIndex + pageTexts.length - 1;
-      setCurrentPageIndex(lastNewPageIndex);
-      
-      // 最後のページでフォーカスを設定
-      setTimeout(() => {
-        if (editorRef.current && pageTexts.length > 0) {
-          editorRef.current.innerHTML = pageTexts[pageTexts.length - 1].replace(/\n/g, '<br>');
-          editorRef.current.focus();
-          moveCursorToEnd();
+
+        if (removed) {
+          prependNode(document.createTextNode(removed));
         }
-      }, 50);
+        return true;
+      }
+
+      editor.removeChild(target);
+      prependNode(target);
+      refreshLineCount();
+      return true;
+    };
+
+    let iterations = 0;
+    const MAX_ITERATIONS = 10000;
+    while (actualLines > maxLinesPerPage && iterations < MAX_ITERATIONS) {
+      if (!peelLastNode()) break;
+      iterations++;
     }
+
+    const overflowHTML = overflowContainer.innerHTML;
+    if (!overflowHTML) {
+      return;
+    }
+
+    const updatedCurrentContent = editor.innerHTML;
+    const newPages = [...pages];
+    newPages[currentPageIndex] = {
+      ...currentPage,
+      content: updatedCurrentContent,
+    };
+
+    const newPage: Page = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      content: overflowHTML,
+    };
+
+    newPages.splice(currentPageIndex + 1, 0, newPage);
+    setPages(newPages);
+    setCurrentPageIndex(currentPageIndex + 1);
+
+    setTimeout(() => {
+      editorRef.current?.focus();
+      moveCursorToEnd();
+    }, 0);
   };
 
   // エディタの内容が変更されたときの処理
@@ -1026,6 +1003,23 @@ export default function TategakiEditor() {
     }
   }, []);
 
+  useEffect(() => {
+    const checkMobileView = () => {
+      if (typeof window === 'undefined') return;
+      setIsMobileView(window.innerWidth < 640);
+    };
+
+    checkMobileView();
+    window.addEventListener('resize', checkMobileView);
+    return () => window.removeEventListener('resize', checkMobileView);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileView) {
+      setIsMobileSidebarOpen(false);
+    }
+  }, [isMobileView]);
+
   // 紹介ダイアログを閉じる処理
   const closeIntroDialog = () => {
     setShowIntroDialog(false);
@@ -1062,6 +1056,331 @@ export default function TategakiEditor() {
     ? 'すでにアカウントをお持ちの方はこちら（ログイン）'
     : '初めての方はこちら（無料登録）';
 
+  const renderHeaderContent = (variant: 'desktop' | 'mobile') => {
+    const containerClass =
+      variant === 'desktop'
+        ? 'flex items-center justify-between'
+        : 'flex flex-col gap-4';
+    const brandWrapperClass =
+      variant === 'desktop'
+        ? 'flex items-center gap-2 min-w-0'
+        : 'flex items-center gap-2 min-w-0 flex-wrap w-full';
+    const titleClass =
+      variant === 'desktop'
+        ? 'text-sm font-medium text-gray-700 whitespace-nowrap mr-24'
+        : 'text-sm font-medium text-gray-700 whitespace-nowrap';
+    const actionWrapperClass =
+      variant === 'desktop'
+        ? 'flex items-center gap-1 flex-wrap justify-end'
+        : 'flex flex-wrap gap-2 items-center w-full';
+
+    return (
+      <div className={containerClass}>
+        <div className={brandWrapperClass}>
+          <div className="w-4 h-4 bg-gray-600 rounded flex items-center justify-center mr-2">
+            <span className="text-white text-xs font-bold">縦</span>
+          </div>
+          <h1 className={titleClass}>tategaki</h1>
+          {isEditingTitle ? (
+            <input
+              ref={titleInputRef}
+              value={documentTitle}
+              onChange={(e) => setDocumentTitle(e.target.value)}
+              onBlur={finishTitleEditing}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  finishTitleEditing();
+                }
+              }}
+              maxLength={120}
+              className="ml-2 text-xs border border-blue-400 rounded px-2 py-1 text-black bg-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-[300px]"
+              placeholder="ドキュメントタイトル"
+              aria-label="ドキュメントタイトル編集"
+              autoFocus
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setIsEditingTitle(true)}
+              className="ml-2 text-sm font-semibold text-gray-800 truncate max-w-[200px] text-left hover:text-blue-600"
+              title="タイトルを編集"
+            >
+              {documentTitle || DEFAULT_DOCUMENT_TITLE}
+            </button>
+          )}
+        </div>
+
+        <div className={actionWrapperClass}>
+          {/* ページナビゲーション */}
+          <button
+            onClick={() => goToPage(currentPageIndex + 1)}
+            disabled={currentPageIndex === pages.length - 1}
+            className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+            title="次のページ（左へ）"
+          >
+            ◀
+          </button>
+          <input
+            type="number"
+            min="1"
+            max={pages.length}
+            value={currentPageIndex + 1}
+            onChange={(e) => goToPage(Number(e.target.value) - 1)}
+            className="w-8 h-6 px-1 text-xs text-center border border-gray-300 rounded text-black"
+          />
+          <span className="text-xs text-gray-500">/{pages.length}</span>
+
+          <button
+            onClick={() => goToPage(currentPageIndex - 1)}
+            disabled={currentPageIndex === 0}
+            className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+            title="前のページ（右へ）"
+          >
+            ▶
+          </button>
+
+          {/* 機能ボタン */}
+          <div className="w-px h-4 bg-gray-300 mx-1"></div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".txt"
+            onChange={handleFileImport}
+            className="hidden"
+          />
+
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+            title="ファイルを開く"
+          >
+            📂
+          </button>
+
+          <button
+            onClick={handleFileExport}
+            className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+            title="ファイルを保存"
+          >
+            💾
+          </button>
+
+          <button
+            onClick={toggleWritingMode}
+            className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+            title={isVertical ? '横書きに切替' : '縦書きに切替'}
+          >
+            {isVertical ? '≡' : '∥'}
+          </button>
+
+          <button
+            onClick={addNewPage}
+            className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+            title="新規ページ"
+          >
+            ＋
+          </button>
+
+          <button
+            onClick={deleteCurrentPage}
+            className="w-6 h-6 border border-gray-400 text-yellow-500 rounded text-xs hover:bg-yellow-50 flex items-center justify-center"
+            title="現在のページを削除"
+          >
+            <FiTrash2 aria-hidden className="text-sm" />
+          </button>
+
+          <button
+            onClick={deleteAllPages}
+            className="w-6 h-6 border border-gray-400 text-red-600 rounded text-xs hover:bg-red-50 flex items-center justify-center"
+            title="全ページ削除"
+          >
+            <FiTrash aria-hidden className="text-sm" />
+          </button>
+
+          {/* AI生成ボタン */}
+          <div className="w-px h-4 bg-gray-300 mx-1"></div>
+
+          <button
+            onClick={openPromptDialog}
+            disabled={isGenerating}
+            className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 disabled:opacity-50"
+            title="AI文章生成 (Cmd+K)"
+          >
+            {isGenerating ? '⏳' : '✨'}
+          </button>
+
+          {/* AIモデル選択 */}
+          <select
+            value={aiModel}
+            onChange={(e) => setAiModel(e.target.value)}
+            className="h-6 px-1 text-xs border border-gray-400 rounded bg-white text-black"
+            title="AIモデル選択"
+            style={{ color: '#000000' }}
+          >
+            <option value="gemini-1.5-flash">Flash</option>
+            <option value="gemini-1.5-pro">Pro</option>
+            <option value="gemini-2.0-flash-exp">2.0 Flash</option>
+          </select>
+
+          {/* APIキー設定ボタン */}
+          <button
+            onClick={() => {
+              setApiKeyInput(googleApiKey);
+              setRevealApiKey(false);
+              setShowApiKeyDialog(true);
+            }}
+            className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+            title={googleApiKey ? 'Google APIキーを変更' : 'Google APIキーを設定'}
+          >
+            🔑
+          </button>
+
+          {/* サービス紹介ボタン */}
+          <button
+            onClick={() => setShowIntroDialog(true)}
+            className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+            title="サービス紹介"
+          >
+            ℹ
+          </button>
+
+          {/* ヘルプボタン */}
+          <button
+            onClick={() => setShowHelp(true)}
+            className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+            title="ショートカットキー"
+          >
+            ？
+          </button>
+
+          <div className="w-px h-4 bg-gray-300 mx-1"></div>
+
+          {user ? (
+            <>
+              <button
+                onClick={saveDocumentToCloud}
+                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 disabled:opacity-60"
+                title="クラウドに保存"
+                disabled={isCloudSaving}
+              >
+                {isCloudSaving ? '⏳' : '☁️'}
+              </button>
+              <button
+                onClick={openCloudDialog}
+                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+                title="クラウドテキストを開く"
+              >
+                📚
+              </button>
+              <button
+                onClick={handleLogout}
+                className="h-6 px-2 border border-gray-400 text-gray-700 rounded text-[10px] font-medium hover:bg-gray-100 transition"
+                title="ログアウト"
+              >
+                ログアウト
+              </button>
+              <span
+                className={`ml-1 text-[10px] text-gray-600 ${
+                  variant === 'desktop' ? 'hidden sm:block' : ''
+                }`}
+                title={user.email}
+              >
+                {user.displayName || user.email}
+              </span>
+            </>
+          ) : (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => openAuthDialog('login')}
+                className="h-6 px-2 border border-gray-400 text-gray-700 rounded text-[10px] font-medium hover:bg-gray-100 transition"
+                title="クラウド連携ログイン"
+              >
+                ログイン
+              </button>
+              <button
+                onClick={() => openAuthDialog('signup')}
+                className="h-6 px-2 border border-blue-400 text-blue-600 rounded text-[10px] font-medium hover:bg-blue-50 transition"
+                title="無料アカウントを作成"
+              >
+                新規登録
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderFooterContent = (variant: 'desktop' | 'mobile') => {
+    const containerClass =
+      variant === 'desktop'
+        ? 'flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500'
+        : 'flex flex-col gap-4 text-sm text-gray-600';
+    const rowClass =
+      variant === 'desktop'
+        ? 'flex items-center gap-3 flex-wrap'
+        : 'flex flex-col gap-2';
+    const linkRowClass =
+      variant === 'desktop'
+        ? 'flex items-center gap-4 flex-wrap text-gray-600'
+        : 'flex flex-col gap-2 text-gray-600';
+
+    return (
+      <div
+        id={variant === 'desktop' ? 'editor-stats' : undefined}
+        className={containerClass}
+        aria-live="polite"
+      >
+        <div className={rowClass}>
+          <span>© {currentYear} tategaki</span>
+          <span>文字数: {charCount}</span>
+          <span
+            className={
+              lineCount >= maxLinesPerPage * 0.9
+                ? lineCount >= maxLinesPerPage
+                  ? 'text-red-600 font-semibold'
+                  : 'text-orange-600 font-semibold'
+                : ''
+            }
+          >
+            行数: {lineCount}/{maxLinesPerPage}
+            {lineCount >= maxLinesPerPage * 0.9 && lineCount < maxLinesPerPage && (
+              <span className="ml-1 text-orange-600">⚠️</span>
+            )}
+          </span>
+        </div>
+
+        <div className={rowClass}>
+          <span>Ctrl+Enter: 改ページ | Cmd+K: AI生成</span>
+          {user && (
+            <span className="flex items-center gap-1 text-gray-600">
+              ☁️ {activeCloudDocument ? activeCloudDocument.title : documentTitle || 'クラウド未保存'}
+            </span>
+          )}
+          {cloudStatus && (
+            <span className={cloudStatus.tone === 'success' ? 'text-green-600' : 'text-red-600'}>
+              {cloudStatus.message}
+            </span>
+          )}
+        </div>
+
+        <div className={linkRowClass}>
+          <Link href="/terms" className="hover:text-gray-900 hover:underline underline-offset-2">
+            サービス利用規約
+          </Link>
+          <Link href="/privacy" className="hover:text-gray-900 hover:underline underline-offset-2">
+            プライバシーポリシー
+          </Link>
+          <Link href="/legal" className="hover:text-gray-900 hover:underline underline-offset-2">
+            特定商取引法に基づく表記
+          </Link>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="h-screen bg-white flex flex-col">
       {/* SEO・LLMO対策用の隠しコンテンツ */}
@@ -1088,243 +1407,57 @@ export default function TategakiEditor() {
       
       <main className="flex-1 bg-white flex flex-col overflow-hidden" role="application" aria-label="縦書き小説エディタ">
       {/* 極小ヘッダー */}
-      <div className="bg-gray-100/50 border-b border-gray-200 px-2 py-1 flex-shrink-0">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="w-4 h-4 bg-gray-600 rounded flex items-center justify-center mr-2">
-              <span className="text-white text-xs font-bold">縦</span>
-            </div>
-            <h1 className="text-sm font-medium text-gray-700 whitespace-nowrap mr-24">tategaki</h1>
-            {isEditingTitle ? (
-              <input
-                ref={titleInputRef}
-                value={documentTitle}
-                onChange={(e) => setDocumentTitle(e.target.value)}
-                onBlur={finishTitleEditing}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault();
-                    finishTitleEditing();
-                  }
-                }}
-                maxLength={120}
-                className="ml-2 text-xs border border-blue-400 rounded px-2 py-1 text-black bg-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-[300px]"
-                placeholder="ドキュメントタイトル"
-                aria-label="ドキュメントタイトル編集"
-                autoFocus
-              />
-            ) : (
-              <button
-                type="button"
-                onClick={() => setIsEditingTitle(true)}
-                className="ml-2 text-sm font-semibold text-gray-800 truncate max-w-[200px] text-left hover:text-blue-600"
-                title="タイトルを編集"
-              >
-                {documentTitle || DEFAULT_DOCUMENT_TITLE}
-              </button>
-            )}
-          </div>
-          
-          {/* コンパクトコントロール */}
-          <div className="flex items-center space-x-1">
-            {/* ページナビゲーション */}
-            <button
-              onClick={() => goToPage(currentPageIndex + 1)}
-              disabled={currentPageIndex === pages.length - 1}
-              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
-              title="次のページ（左へ）"
-            >
-              ◀
-            </button>
-            
-            <input
-              type="number"
-              min="1"
-              max={pages.length}
-              value={currentPageIndex + 1}
-              onChange={(e) => goToPage(Number(e.target.value) - 1)}
-              className="w-8 h-6 px-1 text-xs text-center border border-gray-300 rounded text-black"
-            />
-            <span className="text-xs text-gray-500">/{pages.length}</span>
-            
-            <button
-              onClick={() => goToPage(currentPageIndex - 1)}
-              disabled={currentPageIndex === 0}
-              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
-              title="前のページ（右へ）"
-            >
-              ▶
-            </button>
-            
-            {/* 機能ボタン */}
-            <div className="w-px h-4 bg-gray-300 mx-1"></div>
-            
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".txt"
-              onChange={handleFileImport}
-              className="hidden"
-            />
-            
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-              title="ファイルを開く"
-            >
-              📂
-            </button>
-            
-            <button
-              onClick={handleFileExport}
-              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-              title="ファイルを保存"
-            >
-              💾
-            </button>
-            
-            <button
-              onClick={toggleWritingMode}
-              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-              title={isVertical ? '横書きに切替' : '縦書きに切替'}
-            >
-              {isVertical ? '≡' : '∥'}
-            </button>
-            
-            <button
-              onClick={addNewPage}
-              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-              title="新規ページ"
-            >
-              ＋
-            </button>
-            
-            <button
-              onClick={deleteCurrentPage}
-              className="w-6 h-6 border border-gray-400 text-yellow-500 rounded text-xs hover:bg-yellow-50 flex items-center justify-center"
-              title="現在のページを削除"
-            >
-              <FiTrash2 aria-hidden className="text-sm" />
-            </button>
-            
-            <button
-              onClick={deleteAllPages}
-              className="w-6 h-6 border border-gray-400 text-red-600 rounded text-xs hover:bg-red-50 flex items-center justify-center"
-              title="全ページ削除"
-            >
-              <FiTrash aria-hidden className="text-sm" />
-            </button>
-            
-            {/* AI生成ボタン */}
-            <div className="w-px h-4 bg-gray-300 mx-1"></div>
-            
-            <button
-              onClick={openPromptDialog}
-              disabled={isGenerating}
-              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 disabled:opacity-50"
-              title="AI文章生成 (Cmd+K)"
-            >
-              {isGenerating ? '⏳' : '✨'}
-            </button>
-            
-            {/* AIモデル選択 */}
-            <select
-              value={aiModel}
-              onChange={(e) => setAiModel(e.target.value)}
-              className="h-6 px-1 text-xs border border-gray-400 rounded bg-white text-black"
-              title="AIモデル選択"
-              style={{ color: '#000000' }}
-            >
-              <option value="gemini-1.5-flash">Flash</option>
-              <option value="gemini-1.5-pro">Pro</option>
-              <option value="gemini-2.0-flash-exp">2.0 Flash</option>
-            </select>
-
-            {/* APIキー設定ボタン */}
-            <button
-              onClick={() => {
-                setApiKeyInput(googleApiKey);
-                setRevealApiKey(false);
-                setShowApiKeyDialog(true);
-              }}
-              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-              title={googleApiKey ? 'Google APIキーを変更' : 'Google APIキーを設定'}
-            >
-              🔑
-            </button>
-            
-            {/* サービス紹介ボタン */}
-            <button
-              onClick={() => setShowIntroDialog(true)}
-              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-              title="サービス紹介"
-            >
-              ℹ
-            </button>
-            
-            {/* ヘルプボタン */}
-            <button
-              onClick={() => setShowHelp(true)}
-              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-              title="ショートカットキー"
-            >
-              ？
-            </button>
-
-            <div className="w-px h-4 bg-gray-300 mx-1"></div>
-
-            {user ? (
-              <>
-                <button
-                  onClick={saveDocumentToCloud}
-                  className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 disabled:opacity-60"
-                  title="クラウドに保存"
-                  disabled={isCloudSaving}
-                >
-                  {isCloudSaving ? '⏳' : '☁️'}
-                </button>
-                <button
-                  onClick={openCloudDialog}
-                  className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-                  title="クラウドテキストを開く"
-                >
-                  📚
-                </button>
-                <button
-                  onClick={handleLogout}
-                  className="h-6 px-2 border border-gray-400 text-gray-700 rounded text-[10px] font-medium hover:bg-gray-100 transition"
-                  title="ログアウト"
-                >
-                  ログアウト
-                </button>
-                <span
-                  className="ml-1 text-[10px] text-gray-600 hidden sm:block"
-                  title={user.email}
-                >
-                  {user.displayName || user.email}
-                </span>
-              </>
-            ) : (
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => openAuthDialog('login')}
-                  className="h-6 px-2 border border-gray-400 text-gray-700 rounded text-[10px] font-medium hover:bg-gray-100 transition"
-                  title="クラウド連携ログイン"
-                >
-                  ログイン
-                </button>
-                <button
-                  onClick={() => openAuthDialog('signup')}
-                  className="h-6 px-2 border border-blue-400 text-blue-600 rounded text-[10px] font-medium hover:bg-blue-50 transition"
-                  title="無料アカウントを作成"
-                >
-                  新規登録
-                </button>
+      {isMobileView ? (
+        <>
+          <div className="bg-gray-100/70 border-b border-gray-200 px-3 py-2 flex-shrink-0 flex items-center justify-between sm:hidden">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 bg-gray-600 rounded flex items-center justify-center text-white text-sm font-bold">
+                縦
               </div>
-            )}
+              <span className="text-sm font-semibold text-gray-800">tategaki</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsMobileSidebarOpen(true)}
+              className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg bg-white text-gray-700 shadow-sm"
+            >
+              メニュー
+            </button>
           </div>
+          {isMobileSidebarOpen && (
+            <div className="fixed inset-0 z-40 sm:hidden">
+              <div
+                className="absolute inset-0 bg-black/40"
+                onClick={() => setIsMobileSidebarOpen(false)}
+                aria-hidden="true"
+              ></div>
+              <div className="absolute inset-y-0 right-0 w-full max-w-xs bg-white shadow-2xl p-4 overflow-y-auto">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-base font-semibold text-gray-800">tategaki メニュー</h3>
+                  <button
+                    type="button"
+                    onClick={() => setIsMobileSidebarOpen(false)}
+                    className="w-8 h-8 border border-gray-300 rounded-full text-gray-600"
+                    aria-label="メニューを閉じる"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="space-y-6">
+                  {renderHeaderContent('mobile')}
+                  <div className="border-t border-gray-200 pt-4">
+                    {renderFooterContent('mobile')}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="bg-gray-100/50 border-b border-gray-200 px-2 py-1 flex-shrink-0">
+          {renderHeaderContent('desktop')}
         </div>
-      </div>
+      )}
 
       {/* エディタエリア（画面の95%） */}
       <div className="flex-1 overflow-hidden relative">
@@ -1341,7 +1474,7 @@ export default function TategakiEditor() {
           role="textbox"
           aria-label={`${isVertical ? '縦書き' : '横書き'}小説執筆エディタ - ページ ${currentPageIndex + 1}/${pages.length}`}
           aria-multiline="true"
-          aria-describedby="editor-stats"
+          aria-describedby={isMobileView ? undefined : 'editor-stats'}
           className={`w-full h-full p-8 outline-none resize-none font-serif text-lg leading-relaxed editor-focus text-black ${
             isVertical
               ? 'writing-mode-vertical-rl text-orientation-upright'
@@ -1364,59 +1497,11 @@ export default function TategakiEditor() {
               </div>
 
       {/* 極小ステータスバー */}
-      <div className="bg-gray-100/50 border-t border-gray-200 px-3 py-2 flex-shrink-0">
-        <div
-          id="editor-stats"
-          className="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500"
-          aria-live="polite"
-        >
-          <div className="flex items-center gap-3 flex-wrap">
-            <span>© {currentYear} tategaki</span>
-            <span>文字数: {charCount}</span>
-            <span
-              className={
-                lineCount >= maxLinesPerPage * 0.9
-                  ? lineCount >= maxLinesPerPage
-                    ? 'text-red-600 font-semibold'
-                    : 'text-orange-600 font-semibold'
-                  : ''
-              }
-            >
-              行数: {lineCount}/{maxLinesPerPage}
-              {lineCount >= maxLinesPerPage * 0.9 && lineCount < maxLinesPerPage && (
-                <span className="ml-1 text-orange-600">⚠️</span>
-              )}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-3 flex-wrap">
-            <span>Ctrl+Enter: 改ページ | Cmd+K: AI生成</span>
-            {user && (
-              <span className="flex items-center gap-1 text-gray-600">
-                ☁️ {activeCloudDocument ? activeCloudDocument.title : documentTitle || 'クラウド未保存'}
-              </span>
-            )}
-            {cloudStatus && (
-              <span className={cloudStatus.tone === 'success' ? 'text-green-600' : 'text-red-600'}>
-                {cloudStatus.message}
-              </span>
-            )}
-          </div>
-
-          <div className="flex items-center gap-4 flex-wrap text-gray-600">
-            
-            <Link href="/terms" className="hover:text-gray-900 hover:underline underline-offset-2">
-              サービス利用規約
-            </Link>
-            <Link href="/privacy" className="hover:text-gray-900 hover:underline underline-offset-2">
-              プライバシーポリシー
-            </Link>
-            <Link href="/legal" className="hover:text-gray-900 hover:underline underline-offset-2">
-              特定商取引法に基づく表記
-            </Link>
-          </div>
+      {!isMobileView && (
+        <div className="bg-gray-100/50 border-t border-gray-200 px-3 py-2 flex-shrink-0">
+          {renderFooterContent('desktop')}
         </div>
-      </div>
+      )}
 
       {/* AI生成プロンプトダイアログ */}
       {showPromptDialog && (
