@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FiEye, FiTrash, FiTrash2 } from 'react-icons/fi';
+import { FiEye, FiSettings, FiTrash, FiTrash2 } from 'react-icons/fi';
 
 type Page = {
   id: string;
@@ -27,6 +27,25 @@ type AuthMode = 'login' | 'signup';
 const PAGE_BREAK_SENTINEL = '\n\n=== tategaki:page-break ===\n\n';
 const DEFAULT_DOCUMENT_TITLE = '無題';
 const DEFAULT_MAX_LINES_PER_PAGE = 30;
+const FONT_PRESETS = {
+  classic: {
+    label: '明朝体',
+    stack: '"Noto Serif JP", "Yu Mincho", "YuMincho", "Hiragino Mincho ProN", "MS Mincho", serif',
+  },
+  modern: {
+    label: 'ゴシック体',
+    stack: '"Hiragino Sans", "Yu Gothic", "YuGothic", "Noto Sans JP", "Meiryo", sans-serif',
+  },
+  neutral: {
+    label: 'ヒューマン系',
+    stack: '"Noto Sans", "Source Han Sans", "Segoe UI", "Helvetica Neue", sans-serif',
+  },
+  mono: {
+    label: '等幅',
+    stack: '"IBM Plex Mono", "Source Code Pro", "Consolas", "SFMono-Regular", monospace',
+  },
+} as const;
+type FontPresetKey = keyof typeof FONT_PRESETS;
 
 const htmlToPlainText = (html: string): string => {
   if (!html) return '';
@@ -85,6 +104,12 @@ export default function TategakiEditor() {
   const [isCloudSaving, setIsCloudSaving] = useState(false);
   const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
   const [cloudStatus, setCloudStatus] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
+  const [isAutoSaveEnabled, setIsAutoSaveEnabled] = useState(false);
+  const [autoSaveSignal, setAutoSaveSignal] = useState(0);
+  const [editorFontKey, setEditorFontKey] = useState<FontPresetKey>('classic');
+  const [showSettingsDialog, setShowSettingsDialog] = useState(false);
+  const [settingsFontDraft, setSettingsFontDraft] = useState<FontPresetKey>('classic');
+  const [settingsMaxLinesDraft, setSettingsMaxLinesDraft] = useState(DEFAULT_MAX_LINES_PER_PAGE);
   const [documentTitle, setDocumentTitle] = useState(DEFAULT_DOCUMENT_TITLE);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -98,6 +123,7 @@ export default function TategakiEditor() {
   const [previewingDocumentId, setPreviewingDocumentId] = useState<string | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const saveDocumentToCloudRef = useRef<(() => Promise<void>) | null>(null);
   const [isMobileView, setIsMobileView] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const activeCloudDocument = useMemo(() => {
@@ -107,6 +133,11 @@ export default function TategakiEditor() {
 
   // 現在のページを取得
   const currentPage = pages[currentPageIndex];
+  const editorFontFamily = FONT_PRESETS[editorFontKey]?.stack ?? FONT_PRESETS.classic.stack;
+  const clampMaxLines = (value: number) => {
+    if (Number.isNaN(value)) return DEFAULT_MAX_LINES_PER_PAGE;
+    return Math.min(200, Math.max(10, Math.round(value)));
+  };
 
 
   // カーソル位置を保存・復元する関数
@@ -157,9 +188,6 @@ export default function TategakiEditor() {
     selection.removeAllRanges();
     selection.addRange(range);
   };
-
-  // エディタのサイズを測定して1ページあたりの最大行数を計算する関数
-  const calculateMaxLinesPerPage = () => DEFAULT_MAX_LINES_PER_PAGE;
 
   // 実際のコンテンツ量を計算する関数（縦書き・横書き両対応）
   const calculateActualContentLines = () => {
@@ -336,6 +364,10 @@ export default function TategakiEditor() {
       // 実際の行数を計算
       const actualLines = calculateActualContentLines();
       setLineCount(actualLines);
+      
+      if (isAutoSaveEnabled && user) {
+        setAutoSaveSignal((signal) => signal + 1);
+      }
       
       // 自動ページ送りチェック
       setTimeout(() => {
@@ -714,6 +746,49 @@ export default function TategakiEditor() {
     }
   };
 
+  const persistAutoSavePreference = (enabled: boolean) => {
+    if (typeof window === 'undefined') return;
+    if (enabled) {
+      localStorage.setItem('tategaki-auto-save', 'true');
+    } else {
+      localStorage.removeItem('tategaki-auto-save');
+    }
+  };
+
+  const handleAutoSaveToggle = () => {
+    if (!user) {
+      openAuthDialog('login');
+      return;
+    }
+    setIsAutoSaveEnabled((prev) => {
+      const next = !prev;
+      persistAutoSavePreference(next);
+      return next;
+    });
+  };
+
+  const openSettingsDialog = () => {
+    setSettingsFontDraft(editorFontKey);
+    setSettingsMaxLinesDraft(maxLinesPerPage);
+    setShowSettingsDialog(true);
+  };
+
+  const closeSettingsDialog = () => {
+    setShowSettingsDialog(false);
+  };
+
+  const handleSettingsSave = () => {
+    const normalizedMaxLines = clampMaxLines(settingsMaxLinesDraft);
+    setEditorFontKey(settingsFontDraft);
+    setMaxLinesPerPage(normalizedMaxLines);
+    setSettingsMaxLinesDraft(normalizedMaxLines);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('tategaki-font', settingsFontDraft);
+      localStorage.setItem('tategaki-max-lines', String(normalizedMaxLines));
+    }
+    setShowSettingsDialog(false);
+  };
+
   const saveDocumentToCloud = async () => {
     if (!user) {
       openAuthDialog('login');
@@ -757,6 +832,7 @@ export default function TategakiEditor() {
       setIsCloudSaving(false);
     }
   };
+  saveDocumentToCloudRef.current = saveDocumentToCloud;
 
   const openCloudDialog = () => {
     if (!user) {
@@ -896,11 +972,6 @@ export default function TategakiEditor() {
   // 縦書き/横書き切替
   const toggleWritingMode = () => {
     setIsVertical(!isVertical);
-    // モード切替時に最大行数を再計算
-    setTimeout(() => {
-      const newMaxLines = calculateMaxLinesPerPage();
-      setMaxLinesPerPage(newMaxLines);
-    }, 100);
   };
 
   useEffect(() => {
@@ -961,17 +1032,6 @@ export default function TategakiEditor() {
     }, 0);
   }, [currentPageIndex, pages]);
 
-  // ウィンドウリサイズ時の最大行数再計算
-  useEffect(() => {
-    const handleResize = () => {
-      const newMaxLines = calculateMaxLinesPerPage();
-      setMaxLinesPerPage(newMaxLines);
-    };
-
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [isVertical]);
-
   // 初回訪問者チェックと初期フォーカス
   useEffect(() => {
     // 初回訪問者かどうかをチェック
@@ -992,9 +1052,6 @@ export default function TategakiEditor() {
         // 初期状態では強制的に1行に設定
         setCharCount(0);
         setLineCount(1);
-        // 最大行数を初期計算
-        const newMaxLines = calculateMaxLinesPerPage();
-        setMaxLinesPerPage(newMaxLines);
         if (!showIntroDialog) {
           editorRef.current?.focus();
           moveCursorToEnd();
@@ -1002,6 +1059,42 @@ export default function TategakiEditor() {
       }, 100);
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const storedAutoSave = localStorage.getItem('tategaki-auto-save');
+    if (storedAutoSave === 'true') {
+      setIsAutoSaveEnabled(true);
+    }
+    const storedFont = localStorage.getItem('tategaki-font');
+    if (storedFont && storedFont in FONT_PRESETS) {
+      setEditorFontKey(storedFont as FontPresetKey);
+      setSettingsFontDraft(storedFont as FontPresetKey);
+    }
+    const storedMaxLines = Number(localStorage.getItem('tategaki-max-lines'));
+    if (!Number.isNaN(storedMaxLines) && storedMaxLines >= 10 && storedMaxLines <= 200) {
+      setMaxLinesPerPage(storedMaxLines);
+      setSettingsMaxLinesDraft(storedMaxLines);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isAutoSaveEnabled || !user) return;
+    if (autoSaveSignal === 0) return;
+    const timer = window.setTimeout(() => {
+      saveDocumentToCloudRef.current?.();
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [autoSaveSignal, isAutoSaveEnabled, user]);
+
+  useEffect(() => {
+    if (!editorRef.current) return;
+    setTimeout(() => {
+      const updatedLines = calculateActualContentLines();
+      setLineCount(updatedLines);
+      handleAutoPageBreak();
+    }, 0);
+  }, [maxLinesPerPage, editorFontKey]);
 
   useEffect(() => {
     const checkMobileView = () => {
@@ -1255,7 +1348,31 @@ export default function TategakiEditor() {
             ？
           </button>
 
+          <button
+            onClick={openSettingsDialog}
+            className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 flex items-center justify-center"
+            title="エディタ設定"
+            aria-label="設定"
+          >
+            <FiSettings aria-hidden />
+          </button>
+
           <div className="w-px h-4 bg-gray-300 mx-1"></div>
+
+          <label
+            className={`flex items-center gap-1 border rounded px-2 py-1 text-[10px] ${
+              isAutoSaveEnabled ? 'border-blue-400 text-blue-700' : 'border-gray-300 text-gray-600'
+            }`}
+            title={user ? '一定時間入力が止まると自動保存します' : 'ログインすると自動保存を利用できます'}
+          >
+            <input
+              type="checkbox"
+              checked={isAutoSaveEnabled}
+              onChange={handleAutoSaveToggle}
+              className="h-3 w-3 accent-blue-500"
+            />
+            <span>自動保存</span>
+          </label>
 
           {user ? (
             <>
@@ -1475,7 +1592,7 @@ export default function TategakiEditor() {
           aria-label={`${isVertical ? '縦書き' : '横書き'}小説執筆エディタ - ページ ${currentPageIndex + 1}/${pages.length}`}
           aria-multiline="true"
           aria-describedby={isMobileView ? undefined : 'editor-stats'}
-          className={`w-full h-full p-8 outline-none resize-none font-serif text-lg leading-relaxed editor-focus text-black ${
+          className={`w-full h-full p-8 outline-none resize-none text-lg leading-relaxed editor-focus text-black ${
             isVertical
               ? 'writing-mode-vertical-rl text-orientation-upright'
               : 'writing-mode-horizontal-tb'
@@ -1483,7 +1600,7 @@ export default function TategakiEditor() {
           style={{
             writingMode: isVertical ? 'vertical-rl' : 'horizontal-tb',
             textOrientation: isVertical ? 'upright' : 'mixed',
-            fontFamily: '"Noto Serif JP", "Yu Mincho", "YuMincho", "Hiragino Mincho ProN", serif',
+            fontFamily: editorFontFamily,
             color: '#000000',
             caretColor: '#000000' // カーソルも黒に固定
           }}
@@ -2003,6 +2120,87 @@ export default function TategakiEditor() {
               </button>
               <button
                 onClick={saveApiKey}
+                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 設定ダイアログ */}
+      {showSettingsDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl text-black">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-800">エディタ設定</h3>
+              <button
+                onClick={closeSettingsDialog}
+                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+                aria-label="閉じる"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="space-y-5">
+              <div>
+                <p className="text-sm font-semibold text-gray-800 mb-2">フォント種別</p>
+                <div className="space-y-2">
+                  {(Object.entries(FONT_PRESETS) as [FontPresetKey, (typeof FONT_PRESETS)[FontPresetKey]][]).map(
+                    ([key, preset]) => (
+                      <label
+                        key={key}
+                        className={`flex items-center justify-between border rounded-lg px-3 py-2 cursor-pointer ${
+                          settingsFontDraft === key ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
+                        }`}
+                      >
+                        <div>
+                          <span className="text-sm font-medium text-gray-800">{preset.label}</span>
+                          <p className="text-xs text-gray-500" style={{ fontFamily: preset.stack }}>
+                            あいうえお ABC 123
+                          </p>
+                        </div>
+                        <input
+                          type="radio"
+                          name="editor-font"
+                          value={key}
+                          checked={settingsFontDraft === key}
+                          onChange={() => setSettingsFontDraft(key)}
+                          className="h-4 w-4 text-blue-600"
+                        />
+                      </label>
+                    )
+                  )}
+                </div>
+              </div>
+              <div>
+                <label className="text-sm font-semibold text-gray-800 mb-2 flex items-center justify-between">
+                  最大行数
+                  <span className="text-xs text-gray-500">10〜200行</span>
+                </label>
+                <input
+                  type="number"
+                  min={10}
+                  max={200}
+                  value={settingsMaxLinesDraft}
+                  onChange={(e) => setSettingsMaxLinesDraft(clampMaxLines(Number(e.target.value)))}
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-black"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  設定した行数を超えた場合、自動的に次のページに分割されます。
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-6">
+              <button
+                onClick={closeSettingsDialog}
+                className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-100"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={handleSettingsSave}
                 className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
               >
                 保存
