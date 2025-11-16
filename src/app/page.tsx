@@ -535,11 +535,15 @@ export default function TategakiEditor() {
   // 新しいページを追加
   const addNewPage = () => {
     const newPage: Page = {
-      id: (pages.length + 1).toString(),
+      id: crypto.randomUUID(),
       content: ''
     };
-    setPages([...pages, newPage]);
-    setCurrentPageIndex(pages.length);
+    setPages(prev => {
+      const next = [...prev];
+      next.splice(currentPageIndex + 1, 0, newPage);
+      return next;
+    });
+    setCurrentPageIndex(currentPageIndex + 1);
     // 新しいページでフォーカスを設定
     setTimeout(() => {
       editorRef.current?.focus();
