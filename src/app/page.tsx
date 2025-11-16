@@ -73,6 +73,14 @@ const serializePagesToPlainText = (pages: Page[]) => {
   return plainTextPages.join(PAGE_BREAK_SENTINEL);
 };
 
+const htmlContentToPlainText = (html: string) => {
+  if (typeof document === 'undefined') return html.replace(/\n/g, '');
+  const container = document.createElement('div');
+  container.innerHTML = html || '';
+  const text = container.textContent || container.innerText || '';
+  return text.replace(/\n/g, '');
+};
+
 type RevisionEntry = {
   id: string;
   title: string;
@@ -149,6 +157,7 @@ export default function TategakiEditor() {
   const [settingsRevisionIntervalDraft, setSettingsRevisionIntervalDraft] = useState(
     DEFAULT_REVISION_INTERVAL_MINUTES
   );
+  const [isComposingTitle, setIsComposingTitle] = useState(false);
   const [revisionTimeline, setRevisionTimeline] = useState<RevisionEntry[]>([]);
   const [revisionSliderIndex, setRevisionSliderIndex] = useState(0);
   const [isRevisionTimelineLoading, setIsRevisionTimelineLoading] = useState(false);
@@ -467,12 +476,10 @@ export default function TategakiEditor() {
       }
       
       // 純粋な文字数をカウント（改行文字は除く）
-      const totalChars = (updatedPages || []).reduce((sum, page) => {
-        const container = document.createElement('div');
-        container.innerHTML = page.content || '';
-        const text = container.textContent || container.innerText || '';
-        return sum + text.replace(/\n/g, '').length;
-      }, 0);
+      const totalChars = (updatedPages || []).reduce(
+        (sum, page) => sum + htmlContentToPlainText(page.content || '').length,
+        0
+      );
       setCharCount(totalChars);
       
       // 実際の行数を計算
@@ -590,13 +597,14 @@ export default function TategakiEditor() {
   };
 
   // 新しいページを追加
+  const generatePageId = () =>
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
   const addNewPage = () => {
-    const newPageId =
-      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const newPage: Page = {
-      id: newPageId,
+      id: generatePageId(),
       content: ''
     };
     setPages(prev => {
@@ -784,6 +792,24 @@ export default function TategakiEditor() {
     setAuthPassword('');
     setAuthPasswordConfirm('');
     setShowAuthDialog(true);
+  };
+
+  const handleCreateNewDocument = () => {
+    if (!confirm('編集中の内容をクリアして新規ドキュメントを開始しますか？')) {
+      return;
+    }
+    suppressAutoSaveRef.current = true;
+    setPages([{ id: '1', content: '' }]);
+    setCurrentPageIndex(0);
+    setActiveDocumentId(null);
+    setDocumentTitle(DEFAULT_DOCUMENT_TITLE);
+    setRevisionTimeline([]);
+    setRevisionSliderIndex(0);
+    lastRevisionSavedAtRef.current = null;
+    setTimeout(() => {
+      editorRef.current?.focus();
+      moveCursorToEnd();
+    }, 100);
   };
 
   const closeAuthDialog = () => {
@@ -1395,22 +1421,12 @@ export default function TategakiEditor() {
         : 'flex items-center gap-2 min-w-0 flex-wrap w-full';
     const titleClass =
       variant === 'desktop'
-        ? 'text-sm font-medium text-gray-700 whitespace-nowrap mr-24'
+        ? 'text-sm font-medium text-gray-700 whitespace-nowrap mr-4'
         : 'text-sm font-medium text-gray-700 whitespace-nowrap';
     const actionWrapperClass =
       variant === 'desktop'
         ? 'flex items-center gap-1 flex-wrap justify-end'
         : 'flex flex-wrap gap-2 items-center w-full';
-    const hasRevisions = Boolean(activeDocumentId && revisionTimeline.length > 0);
-    const revisionSliderMax = Math.max(revisionTimeline.length - 1, 0);
-    const safeRevisionIndex = Math.min(revisionSliderIndex, revisionSliderMax);
-    const sliderDenominator = Math.max(revisionTimeline.length - 1, 1);
-    const revisionSliderPercent =
-      revisionTimeline.length <= 1
-        ? 100
-        : (safeRevisionIndex / sliderDenominator) * 100;
-    const currentRevision = revisionTimeline[safeRevisionIndex];
-
     return (
       <div className={containerClass}>
         <div className={brandWrapperClass}>
@@ -1424,8 +1440,10 @@ export default function TategakiEditor() {
               value={documentTitle}
               onChange={(e) => setDocumentTitle(e.target.value)}
               onBlur={finishTitleEditing}
+              onCompositionStart={() => setIsComposingTitle(true)}
+              onCompositionEnd={() => setIsComposingTitle(false)}
               onKeyDown={(event) => {
-                if (event.key === 'Enter') {
+                if (event.key === 'Enter' && !isComposingTitle) {
                   event.preventDefault();
                   finishTitleEditing();
                 }
@@ -1602,63 +1620,6 @@ export default function TategakiEditor() {
           </button>
 
           <div className="w-px h-4 bg-gray-300 mx-1"></div>
-
-          {hasRevisions && (
-            <div className="flex items-center gap-2 px-2 min-w-[230px]">
-              <div className="flex flex-col text-[10px] text-gray-500 leading-tight">
-                <span>リビジョン</span>
-                {isRevisionTimelineLoading ? (
-                  <span className="text-gray-400">更新中...</span>
-                ) : (
-                  <span className="text-gray-400">
-                    {safeRevisionIndex + 1}/{revisionTimeline.length}
-                  </span>
-                )}
-              </div>
-              <div className="relative h-4 w-40">
-                <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-1 rounded-full bg-gray-200"></div>
-                <div
-                  className="absolute left-0 top-1/2 -translate-y-1/2 h-1 rounded-full bg-gradient-to-r from-blue-400 to-blue-600"
-                  style={{ width: `${revisionSliderPercent}%` }}
-                ></div>
-                <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 pointer-events-none">
-                  {revisionTimeline.map((revision, index) => {
-                    const percent =
-                      revisionTimeline.length <= 1
-                        ? 100
-                        : (index / sliderDenominator) * 100;
-                    return (
-                      <span
-                        key={revision.id}
-                        className={`absolute w-1.5 h-1.5 rounded-full ${
-                          index <= safeRevisionIndex ? 'bg-blue-500' : 'bg-gray-300'
-                        }`}
-                        style={{ left: `calc(${percent}% - 3px)` }}
-                      ></span>
-                    );
-                  })}
-                </div>
-                <div
-                  className="absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-white shadow bg-blue-500 pointer-events-none"
-                  style={{ left: `calc(${revisionSliderPercent}% - 8px)` }}
-                ></div>
-                <input
-                  type="range"
-                  min={0}
-                  max={revisionSliderMax}
-                  value={safeRevisionIndex}
-                  disabled={revisionTimeline.length <= 1 || isRevisionTimelineLoading}
-                  onChange={(event) => handleRevisionSliderChange(Number(event.target.value))}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                  aria-label="リビジョンタイムライン"
-                />
-              </div>
-              <div className="text-[10px] text-gray-500 w-16 text-right leading-tight">
-                {currentRevision ? formatRevisionTimestamp(currentRevision.createdAt) : '---'}
-              </div>
-            </div>
-          )}
-
           <label
             className={`flex items-center gap-1 border rounded px-2 py-1 text-[10px] ${
               isAutoSaveEnabled ? 'border-blue-400 text-blue-700' : 'border-gray-300 text-gray-600'
@@ -1676,10 +1637,17 @@ export default function TategakiEditor() {
 
           {user ? (
             <>
-              <button
-                onClick={saveDocumentToCloud}
-                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 disabled:opacity-60"
-                title="クラウドに保存"
+                <button
+                  onClick={handleFileExport}
+                  className="h-6 px-2 border border-gray-400 text-gray-700 rounded text-[10px] font-medium hover:bg-gray-100 transition"
+                  title="ローカルにエクスポート"
+                >
+                  エクスポート
+                </button>
+                <button
+                  onClick={saveDocumentToCloud}
+                  className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 disabled:opacity-60"
+                  title="クラウドに保存"
                 disabled={isCloudSaving}
               >
                 {isCloudSaving ? '⏳' : '☁️'}
@@ -1690,6 +1658,13 @@ export default function TategakiEditor() {
                 title="クラウドテキストを開く"
               >
                 📚
+              </button>
+              <button
+                onClick={handleCreateNewDocument}
+                className="h-6 px-2 border border-green-400 text-green-600 rounded text-[10px] font-medium hover:bg-green-50 transition"
+                title="新しいドキュメントを作成"
+              >
+                新規
               </button>
               <button
                 onClick={handleLogout}
@@ -1739,6 +1714,16 @@ export default function TategakiEditor() {
       variant === 'desktop'
         ? 'flex items-center gap-3 flex-wrap'
         : 'flex flex-col gap-2';
+    const hasRevisions = Boolean(activeDocumentId && revisionTimeline.length > 0);
+    const revisionSliderMax = Math.max(revisionTimeline.length - 1, 0);
+    const safeRevisionIndex = Math.min(revisionSliderIndex, revisionSliderMax);
+    const sliderDenominator = Math.max(revisionTimeline.length - 1, 1);
+    const revisionSliderPercent =
+      revisionTimeline.length <= 1
+        ? 100
+        : (safeRevisionIndex / sliderDenominator) * 100;
+    const currentRevision = revisionTimeline[safeRevisionIndex];
+
     const linkRowClass =
       variant === 'desktop'
         ? 'flex items-center gap-4 flex-wrap text-gray-600'
@@ -1782,6 +1767,62 @@ export default function TategakiEditor() {
             </span>
           )}
         </div>
+
+        {hasRevisions && (
+          <div className="flex items-center gap-3">
+            <div className="flex flex-col text-[10px] text-gray-500 leading-tight">
+              <span>リビジョン</span>
+              {isRevisionTimelineLoading ? (
+                <span className="text-gray-400">更新中...</span>
+              ) : (
+                <span className="text-gray-400">
+                  {safeRevisionIndex + 1}/{revisionTimeline.length}
+                </span>
+              )}
+            </div>
+            <div className="relative h-4 w-48">
+              <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-1 rounded-full bg-gray-200"></div>
+              <div
+                className="absolute left-0 top-1/2 -translate-y-1/2 h-1 rounded-full bg-gradient-to-r from-blue-400 to-blue-600"
+                style={{ width: `${revisionSliderPercent}%` }}
+              ></div>
+              <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 pointer-events-none">
+                {revisionTimeline.map((revision, index) => {
+                  const percent =
+                    revisionTimeline.length <= 1
+                      ? 100
+                      : (index / sliderDenominator) * 100;
+                  return (
+                    <span
+                      key={revision.id}
+                      className={`absolute w-1.5 h-1.5 rounded-full ${
+                        index <= safeRevisionIndex ? 'bg-blue-500' : 'bg-gray-300'
+                      }`}
+                      style={{ left: `calc(${percent}% - 3px)` }}
+                    ></span>
+                  );
+                })}
+              </div>
+              <div
+                className="absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-white shadow bg-blue-500 pointer-events-none"
+                style={{ left: `calc(${revisionSliderPercent}% - 8px)` }}
+              ></div>
+              <input
+                type="range"
+                min={0}
+                max={revisionSliderMax}
+                value={safeRevisionIndex}
+                disabled={revisionTimeline.length <= 1 || isRevisionTimelineLoading}
+                onChange={(event) => handleRevisionSliderChange(Number(event.target.value))}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                aria-label="リビジョンタイムライン"
+              />
+            </div>
+            <div className="text-[10px] text-gray-500 w-20 text-right leading-tight">
+              {currentRevision ? formatRevisionTimestamp(currentRevision.createdAt) : '---'}
+            </div>
+          </div>
+        )}
 
         <div className={linkRowClass}>
           <Link href="/terms" className="hover:text-gray-900 hover:underline underline-offset-2">
@@ -2114,6 +2155,14 @@ export default function TategakiEditor() {
                   ✕
                 </button>
               </div>
+            </div>
+            <div className="mb-3">
+              <button
+                onClick={handleCreateNewDocument}
+                className="w-full border border-green-400 text-green-700 rounded-md px-3 py-2 text-sm font-semibold hover:bg-green-50 transition"
+              >
+                ＋ 新しいドキュメントを作成
+              </button>
             </div>
             {isCloudLoading ? (
               <div className="text-sm text-gray-600">読み込み中です…</div>
