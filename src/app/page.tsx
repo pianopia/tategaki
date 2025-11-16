@@ -397,12 +397,60 @@ export default function TategakiEditor() {
 
     newPages.splice(currentPageIndex + 1, 0, newPage);
     setPages(newPages);
-    setCurrentPageIndex(currentPageIndex + 1);
+    setLineCount(actualLines);
+  };
 
-    setTimeout(() => {
-      editorRef.current?.focus();
-      moveCursorToEnd();
-    }, 0);
+  const handlePageUnderflow = () => {
+    if (!editorRef.current) return;
+    const nextPage = pages[currentPageIndex + 1];
+    if (!nextPage) return;
+
+    let actualLines = calculateActualContentLines();
+    if (actualLines >= maxLinesPerPage) return;
+
+    const editor = editorRef.current;
+    const nextContainer = document.createElement('div');
+    nextContainer.innerHTML = nextPage.content;
+    const cursorPosition = saveCursorPosition();
+
+    let moved = false;
+    let iterations = 0;
+    const MAX_PULL_ITERATIONS = 10000;
+
+    while (actualLines < maxLinesPerPage && nextContainer.firstChild && iterations < MAX_PULL_ITERATIONS) {
+      const node = nextContainer.firstChild as Node;
+      nextContainer.removeChild(node);
+      editor.appendChild(node);
+      moved = true;
+      actualLines = calculateActualContentLines();
+      iterations++;
+    }
+
+    if (!moved) {
+      if (cursorPosition) {
+        restoreCursorPosition(cursorPosition);
+      }
+      return;
+    }
+
+    const updatedCurrentContent = editor.innerHTML;
+    const updatedNextContent = nextContainer.innerHTML;
+
+    setPages(prev => {
+      const next = [...prev];
+      next[currentPageIndex] = { ...next[currentPageIndex], content: updatedCurrentContent };
+      if (updatedNextContent.trim()) {
+        next[currentPageIndex + 1] = { ...next[currentPageIndex + 1], content: updatedNextContent };
+      } else {
+        next.splice(currentPageIndex + 1, 1);
+      }
+      return next;
+    });
+
+    setLineCount(actualLines);
+    if (cursorPosition) {
+      restoreCursorPosition(cursorPosition);
+    }
   };
 
   // エディタの内容が変更されたときの処理
@@ -410,19 +458,22 @@ export default function TategakiEditor() {
     if (editorRef.current) {
       const content = editorRef.current.innerHTML;
       // 変更がない場合はページ配列を更新しない（無限再レンダを防止）
+      let updatedPages = pages;
       if (content !== currentPage.content) {
-        setPages(prev => {
-          const next = [...prev];
-          const idx = Math.min(currentPageIndex, next.length - 1);
-          next[idx] = { ...next[idx], content };
-          return next;
-        });
+        updatedPages = pages.map((page, index) =>
+          index === currentPageIndex ? { ...page, content } : page
+        );
+        setPages(updatedPages);
       }
       
       // 純粋な文字数をカウント（改行文字は除く）
-      const plainText = editorRef.current.innerText || '';
-      const pureText = plainText.replace(/\n/g, '');
-      setCharCount(pureText.length);
+      const totalChars = (updatedPages || []).reduce((sum, page) => {
+        const container = document.createElement('div');
+        container.innerHTML = page.content || '';
+        const text = container.textContent || container.innerText || '';
+        return sum + text.replace(/\n/g, '').length;
+      }, 0);
+      setCharCount(totalChars);
       
       // 実際の行数を計算
       const actualLines = calculateActualContentLines();
@@ -434,9 +485,15 @@ export default function TategakiEditor() {
         setAutoSaveSignal((signal) => signal + 1);
       }
       
+      const shouldPullFromNext =
+        actualLines < maxLinesPerPage && Boolean(pages[currentPageIndex + 1]?.content?.trim());
+
       // 自動ページ送りチェック
       setTimeout(() => {
         handleAutoPageBreak();
+        if (shouldPullFromNext) {
+          handlePageUnderflow();
+        }
       }, 100); // DOM更新後に実行
     }
   };
@@ -534,8 +591,12 @@ export default function TategakiEditor() {
 
   // 新しいページを追加
   const addNewPage = () => {
+    const newPageId =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const newPage: Page = {
-      id: crypto.randomUUID(),
+      id: newPageId,
       content: ''
     };
     setPages(prev => {
@@ -1370,7 +1431,7 @@ export default function TategakiEditor() {
                 }
               }}
               maxLength={120}
-              className="ml-2 text-xs border border-blue-400 rounded px-2 py-1 text-black bg-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-[300px]"
+              className="ml-2 text-xs border border-blue-400 rounded px-2 py-1 text-black bg-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-[240px]"
               placeholder="ドキュメントタイトル"
               aria-label="ドキュメントタイトル編集"
               autoFocus
