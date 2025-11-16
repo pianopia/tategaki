@@ -1785,8 +1785,8 @@ export default function TategakiEditor() {
 
       {/* サービス紹介ダイアログ */}
       {showIntroDialog && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl p-8 max-w-2xl w-full mx-4 shadow-2xl border border-gray-100 animate-in slide-in-from-bottom-4 duration-500">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm px-4 py-6 sm:p-8">
+          <div className="bg-white rounded-2xl p-6 sm:p-8 max-w-2xl w-full shadow-2xl border border-gray-100 animate-in slide-in-from-bottom-4 duration-500 max-h-[90vh] overflow-y-auto">
             {/* ヘッダー */}
             <div className="text-center mb-8">
               <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
@@ -1797,7 +1797,7 @@ export default function TategakiEditor() {
             </div>
 
             {/* 機能紹介 */}
-            <div className="grid md:grid-cols-2 gap-6 mb-8">
+            <div className="grid md:grid-cols-2 gap-6 mb-6">
               <div className="flex items-start space-x-3">
                 <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
                   <span className="text-blue-600 text-lg">✍️</span>
@@ -1817,44 +1817,10 @@ export default function TategakiEditor() {
                   <p className="text-sm text-gray-600">Google Gemini搭載で続きの文章生成、対話作成、描写強化をサポート</p>
                 </div>
               </div>
-
-              <div className="flex items-start space-x-3">
-                <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
-                  <span className="text-green-600 text-lg">📄</span>
-                </div>
-                <div>
-                  <h3 className="font-semibold text-gray-800 mb-1">ページ管理</h3>
-                  <p className="text-sm text-gray-600">長編小説も快適に執筆できる柔軟なページ管理システム</p>
-                </div>
-              </div>
-
-              <div className="flex items-start space-x-3">
-                <div className="w-8 h-8 bg-orange-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
-                  <span className="text-orange-600 text-lg">⚡</span>
-                </div>
-                <div>
-                  <h3 className="font-semibold text-gray-800 mb-1">効率的操作</h3>
-                  <p className="text-sm text-gray-600">豊富なショートカットキーで執筆スピードを大幅向上</p>
-                </div>
-              </div>
-            </div>
-
-            {/* クイックスタート */}
-            <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-6">
-              <h3 className="font-semibold text-gray-800 mb-2 flex items-center">
-                <span className="mr-2">💡</span>
-                クイックスタート
-              </h3>
-              <div className="grid md:grid-cols-2 gap-3 text-sm text-gray-700">
-                <div>• <kbd className="bg-gray-200 px-1 rounded text-xs">Cmd+K</kbd> でAI文章生成</div>
-                <div>• <kbd className="bg-gray-200 px-1 rounded text-xs">Ctrl+Enter</kbd> で改ページ</div>
-                <div>• 縦/横ボタンで書字モード切替</div>
-                <div>• ✨ボタンでAI執筆支援</div>
-              </div>
             </div>
 
             {/* アクションボタン */}
-            <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex flex-col sm:flex-row gap-3 mb-4">
               <button
                 onClick={closeIntroDialog}
                 className="flex-1 bg-gradient-to-r from-blue-500 to-purple-600 text-white px-6 py-3 rounded-xl font-semibold hover:from-blue-600 hover:to-purple-700 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
@@ -1874,8 +1840,17 @@ export default function TategakiEditor() {
             </div>
 
             {/* フッター */}
-            <div className="text-center mt-6 text-xs text-gray-500">
-              完全無料でご利用いただけます 🎉
+            <div className="text-center space-y-1">
+              <p className="text-sm text-gray-600 flex flex-col sm:flex-row items-center justify-center gap-2">
+                <span>ログインするとクラウド保存が可能です。</span>
+                <button
+                  type="button"
+                  onClick={() => openAuthDialog('login')}
+                  className="text-blue-600 underline underline-offset-2 hover:text-blue-700"
+                >
+                  ログイン・アカウント作成はこちら
+                </button>
+              </p>
             </div>
           </div>
         </div>
