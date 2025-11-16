@@ -1429,6 +1429,19 @@ const handleSettingsSave = () => {
   }, [pages, editorMode]);
 
   useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const originalOverflow = document.body.style.overflow;
+    if (editorMode === 'continuous') {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = originalOverflow;
+    }
+    return () => {
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [editorMode]);
+
+  useEffect(() => {
     if (!isAutoSaveEnabled || !user) return;
     if (autoSaveSignal === 0) return;
     const timer = window.setTimeout(() => {

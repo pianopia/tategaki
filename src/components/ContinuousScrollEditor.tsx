@@ -37,16 +37,17 @@ export default function ContinuousScrollEditor({
     const container = scrollContainerRef.current;
     if (!container) return;
 
-    if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
-      event.preventDefault();
-      container.scrollLeft += event.deltaY;
-    }
+    event.preventDefault();
+    const horizontalDelta =
+      Math.abs(event.deltaY) > Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+    container.scrollLeft += horizontalDelta;
   };
 
   return (
     <div
       ref={scrollContainerRef}
       className="flex-1 overflow-x-auto overflow-y-hidden bg-gray-50"
+      style={{ touchAction: 'pan-x' }}
       onWheel={handleWheel}
     >
       <div className="min-h-[60vh] w-full">
