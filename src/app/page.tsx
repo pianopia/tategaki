@@ -26,7 +26,7 @@ type AuthMode = 'login' | 'signup';
 
 const PAGE_BREAK_SENTINEL = '\n\n=== tategaki:page-break ===\n\n';
 const DEFAULT_DOCUMENT_TITLE = '無題';
-const DEFAULT_MAX_LINES_PER_PAGE = 30;
+const DEFAULT_MAX_LINES_PER_PAGE = 40;
 const DEFAULT_REVISION_INTERVAL_MINUTES = 10;
 const FONT_PRESETS = {
   classic: {
