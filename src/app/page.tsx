@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FiEye, FiSettings, FiTrash, FiTrash2 } from 'react-icons/fi';
 
+import ContinuousScrollEditor from '@/components/ContinuousScrollEditor';
+
 type Page = {
   id: string;
   content: string;
@@ -28,6 +30,8 @@ const PAGE_BREAK_SENTINEL = '\n\n=== tategaki:page-break ===\n\n';
 const DEFAULT_DOCUMENT_TITLE = '無題';
 const DEFAULT_MAX_LINES_PER_PAGE = 40;
 const DEFAULT_REVISION_INTERVAL_MINUTES = 10;
+const DEFAULT_EDITOR_MODE: 'paged' | 'continuous' = 'paged';
+const CONTINUOUS_BREAK_MARK = '<div data-tategaki-break="true"></div>';
 const FONT_PRESETS = {
   classic: {
     label: '明朝体',
@@ -79,6 +83,20 @@ const htmlContentToPlainText = (html: string) => {
   container.innerHTML = html || '';
   const text = container.textContent || container.innerText || '';
   return text.replace(/\n/g, '');
+};
+
+const computeTotalChars = (pagesData: Page[]) =>
+  pagesData.reduce((sum, page) => sum + htmlContentToPlainText(page.content || '').length, 0);
+
+const joinPagesForContinuous = (pagesData: Page[]) =>
+  pagesData
+    .map((page) => page.content || '')
+    .filter((content, index, array) => !(index === array.length - 1 && !content))
+    .join(CONTINUOUS_BREAK_MARK);
+
+const splitContinuousHtml = (html: string) => {
+  if (!html) return [''];
+  return html.split(CONTINUOUS_BREAK_MARK);
 };
 
 type RevisionEntry = {
@@ -158,6 +176,8 @@ export default function TategakiEditor() {
     DEFAULT_REVISION_INTERVAL_MINUTES
   );
   const [isComposingTitle, setIsComposingTitle] = useState(false);
+  const [editorMode, setEditorMode] = useState<'paged' | 'continuous'>(DEFAULT_EDITOR_MODE);
+  const [continuousHtml, setContinuousHtml] = useState('');
   const [revisionTimeline, setRevisionTimeline] = useState<RevisionEntry[]>([]);
   const [revisionSliderIndex, setRevisionSliderIndex] = useState(0);
   const [isRevisionTimelineLoading, setIsRevisionTimelineLoading] = useState(false);
@@ -331,6 +351,7 @@ export default function TategakiEditor() {
 
   // 自動ページ送り処理（画面上の実際の行数に合わせて動作）
   const handleAutoPageBreak = () => {
+    if (editorMode !== 'paged') return;
     if (!editorRef.current || !currentPage) return;
 
     let actualLines = calculateActualContentLines();
@@ -410,6 +431,7 @@ export default function TategakiEditor() {
   };
 
   const handlePageUnderflow = () => {
+    if (editorMode !== 'paged') return;
     if (!editorRef.current) return;
     const nextPage = pages[currentPageIndex + 1];
     if (!nextPage) return;
@@ -482,26 +504,30 @@ export default function TategakiEditor() {
       );
       setCharCount(totalChars);
       
-      // 実際の行数を計算
-      const actualLines = calculateActualContentLines();
-      setLineCount(actualLines);
-      
-      if (suppressAutoSaveRef.current) {
-        suppressAutoSaveRef.current = false;
-      } else if (isAutoSaveEnabled && user) {
-        setAutoSaveSignal((signal) => signal + 1);
-      }
-      
-      const shouldPullFromNext =
-        actualLines < maxLinesPerPage && Boolean(pages[currentPageIndex + 1]?.content?.trim());
-
-      // 自動ページ送りチェック
-      setTimeout(() => {
-        handleAutoPageBreak();
-        if (shouldPullFromNext) {
-          handlePageUnderflow();
+      if (editorMode === 'paged') {
+        // 実際の行数を計算
+        const actualLines = calculateActualContentLines();
+        setLineCount(actualLines);
+        
+        if (suppressAutoSaveRef.current) {
+          suppressAutoSaveRef.current = false;
+        } else if (isAutoSaveEnabled && user) {
+          setAutoSaveSignal((signal) => signal + 1);
         }
-      }, 100); // DOM更新後に実行
+        
+        const shouldPullFromNext =
+          actualLines < maxLinesPerPage && Boolean(pages[currentPageIndex + 1]?.content?.trim());
+
+        // 自動ページ送りチェック
+        setTimeout(() => {
+          handleAutoPageBreak();
+          if (shouldPullFromNext) {
+            handlePageUnderflow();
+          }
+        }, 100); // DOM更新後に実行
+      } else {
+        suppressAutoSaveRef.current = false;
+      }
     }
   };
 
@@ -812,6 +838,37 @@ export default function TategakiEditor() {
     }, 100);
   };
 
+  const handleEditorModeChange = (mode: 'paged' | 'continuous') => {
+    if (mode === editorMode) return;
+    if (mode === 'continuous') {
+      const combined = joinPagesForContinuous(pages);
+      setContinuousHtml(combined);
+      setLineCount(0);
+    } else {
+      const sourceHtml = continuousHtml || joinPagesForContinuous(pages);
+      const segments = splitContinuousHtml(sourceHtml);
+      const nextPages =
+        segments.length > 0
+          ? segments.map((content, index) => ({
+              id: pages[index]?.id ?? generatePageId(),
+              content,
+            }))
+          : [{ id: generatePageId(), content: '' }];
+      setPages(nextPages);
+      setCurrentPageIndex(0);
+      setTimeout(() => {
+        if (editorRef.current) {
+          editorRef.current.innerHTML = nextPages[0]?.content || '';
+          handleEditorChange();
+        }
+      }, 50);
+    }
+    setEditorMode(mode);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('tategaki-editor-mode', mode);
+    }
+  };
+
   const closeAuthDialog = () => {
     setShowAuthDialog(false);
     setAuthMode('login');
@@ -982,21 +1039,21 @@ export default function TategakiEditor() {
     setShowSettingsDialog(false);
   };
 
-  const handleSettingsSave = () => {
-    const normalizedMaxLines = clampMaxLines(settingsMaxLinesDraft);
-    const normalizedRevisionInterval = clampRevisionInterval(settingsRevisionIntervalDraft);
-    setEditorFontKey(settingsFontDraft);
-    setMaxLinesPerPage(normalizedMaxLines);
-    setSettingsMaxLinesDraft(normalizedMaxLines);
-    setRevisionIntervalMinutes(normalizedRevisionInterval);
-    setSettingsRevisionIntervalDraft(normalizedRevisionInterval);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('tategaki-font', settingsFontDraft);
-      localStorage.setItem('tategaki-max-lines', String(normalizedMaxLines));
-      localStorage.setItem('tategaki-revision-interval', String(normalizedRevisionInterval));
-    }
-    setShowSettingsDialog(false);
-  };
+const handleSettingsSave = () => {
+  const normalizedMaxLines = clampMaxLines(settingsMaxLinesDraft);
+  const normalizedRevisionInterval = clampRevisionInterval(settingsRevisionIntervalDraft);
+  setEditorFontKey(settingsFontDraft);
+  setMaxLinesPerPage(normalizedMaxLines);
+  setSettingsMaxLinesDraft(normalizedMaxLines);
+  setRevisionIntervalMinutes(normalizedRevisionInterval);
+  setSettingsRevisionIntervalDraft(normalizedRevisionInterval);
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('tategaki-font', settingsFontDraft);
+    localStorage.setItem('tategaki-max-lines', String(normalizedMaxLines));
+    localStorage.setItem('tategaki-revision-interval', String(normalizedRevisionInterval));
+  }
+  setShowSettingsDialog(false);
+};
 
   const applyRevisionToEditor = (revision: RevisionEntry, options?: { silent?: boolean }) => {
     if (!revision) return;
@@ -1028,6 +1085,21 @@ export default function TategakiEditor() {
     if (revision) {
       applyRevisionToEditor(revision);
     }
+  };
+
+  const handleContinuousContentChange = (html: string) => {
+    setContinuousHtml(html);
+    const segments = splitContinuousHtml(html);
+    if (segments.length === 0) {
+      setPages([{ id: generatePageId(), content: '' }]);
+      return;
+    }
+    setPages((prev) =>
+      segments.map((content, index) => ({
+        id: prev[index]?.id ?? generatePageId(),
+        content,
+      }))
+    );
   };
 
   const saveDocumentToCloud = async () => {
@@ -1337,7 +1409,24 @@ export default function TategakiEditor() {
       setRevisionIntervalMinutes(storedRevisionInterval);
       setSettingsRevisionIntervalDraft(storedRevisionInterval);
     }
+
+    const storedMode =
+      (typeof window !== 'undefined' && (localStorage.getItem('tategaki-editor-mode') as 'paged' | 'continuous')) ||
+      DEFAULT_EDITOR_MODE;
+    if (storedMode === 'continuous' || storedMode === 'paged') {
+      setEditorMode(storedMode);
+    }
   }, []);
+
+  useEffect(() => {
+    setCharCount(computeTotalChars(pages));
+  }, [pages]);
+
+  useEffect(() => {
+    if (editorMode === 'continuous') {
+      setContinuousHtml(joinPagesForContinuous(pages));
+    }
+  }, [pages, editorMode]);
 
   useEffect(() => {
     if (!isAutoSaveEnabled || !user) return;
@@ -1619,6 +1708,27 @@ export default function TategakiEditor() {
             <FiSettings aria-hidden />
           </button>
 
+          <div className="flex border border-gray-300 rounded overflow-hidden text-[10px]">
+            <button
+              type="button"
+              onClick={() => handleEditorModeChange('paged')}
+              className={`px-2 py-1 ${
+                editorMode === 'paged' ? 'bg-gray-800 text-white' : 'text-gray-600 bg-white'
+              }`}
+            >
+              ページ
+            </button>
+            <button
+              type="button"
+              onClick={() => handleEditorModeChange('continuous')}
+              className={`px-2 py-1 ${
+                editorMode === 'continuous' ? 'bg-gray-800 text-white' : 'text-gray-600 bg-white'
+              }`}
+            >
+              横スクロール
+            </button>
+          </div>
+
           <div className="w-px h-4 bg-gray-300 mx-1"></div>
           <label
             className={`flex items-center gap-1 border rounded px-2 py-1 text-[10px] ${
@@ -1738,20 +1848,24 @@ export default function TategakiEditor() {
         <div className={rowClass}>
           <span>© {currentYear} tategaki</span>
           <span>文字数: {charCount}</span>
-          <span
-            className={
-              lineCount >= maxLinesPerPage * 0.9
-                ? lineCount >= maxLinesPerPage
-                  ? 'text-red-600 font-semibold'
-                  : 'text-orange-600 font-semibold'
-                : ''
-            }
-          >
-            行数: {lineCount}/{maxLinesPerPage}
-            {lineCount >= maxLinesPerPage * 0.9 && lineCount < maxLinesPerPage && (
-              <span className="ml-1 text-orange-600">⚠️</span>
-            )}
-          </span>
+          {editorMode === 'paged' ? (
+            <span
+              className={
+                lineCount >= maxLinesPerPage * 0.9
+                  ? lineCount >= maxLinesPerPage
+                    ? 'text-red-600 font-semibold'
+                    : 'text-orange-600 font-semibold'
+                  : ''
+              }
+            >
+              行数: {lineCount}/{maxLinesPerPage}
+              {lineCount >= maxLinesPerPage * 0.9 && lineCount < maxLinesPerPage && (
+                <span className="ml-1 text-orange-600">⚠️</span>
+              )}
+            </span>
+          ) : (
+            <span>行数: ―</span>
+          )}
         </div>
 
         <div className={rowClass}>
@@ -1919,40 +2033,51 @@ export default function TategakiEditor() {
 
       {/* エディタエリア（画面の95%） */}
       <div className="flex-1 overflow-hidden relative">
-        {/* 行数上限警告バナー */}
-        {lineCount >= maxLinesPerPage * 0.9 && lineCount < maxLinesPerPage && (
-          <div className="absolute top-2 left-1/2 transform -translate-x-1/2 z-10 bg-orange-100 border border-orange-300 text-orange-800 px-3 py-1 rounded-md text-sm shadow-lg">
-            ⚠️ あと{maxLinesPerPage - lineCount}行でページが自動で切り替わります
-          </div>
-        )}
-        
-        <div
-          ref={editorRef}
-          contentEditable
-          role="textbox"
-          aria-label={`${isVertical ? '縦書き' : '横書き'}小説執筆エディタ - ページ ${currentPageIndex + 1}/${pages.length}`}
-          aria-multiline="true"
-          aria-describedby={isMobileView ? undefined : 'editor-stats'}
-          className={`w-full h-full p-8 outline-none resize-none text-lg leading-relaxed editor-focus text-black ${
-            isVertical
-              ? 'writing-mode-vertical-rl text-orientation-upright'
-              : 'writing-mode-horizontal-tb'
-          }`}
-          style={{
-            writingMode: isVertical ? 'vertical-rl' : 'horizontal-tb',
-            textOrientation: isVertical ? 'upright' : 'mixed',
-            fontFamily: editorFontFamily,
-            color: '#000000',
-            caretColor: '#000000' // カーソルも黒に固定
-          }}
-          onInput={handleEditorChange}
-          onPaste={handlePaste}
-          onKeyDown={handleKeyDown}
-          suppressContentEditableWarning={true}
-          data-writing-mode={isVertical ? 'vertical' : 'horizontal'}
-          data-content-type="novel-manuscript"
-        />
+        {editorMode === 'paged' ? (
+          <>
+            {lineCount >= maxLinesPerPage * 0.9 && lineCount < maxLinesPerPage && (
+              <div className="absolute top-2 left-1/2 transform -translate-x-1/2 z-10 bg-orange-100 border border-orange-300 text-orange-800 px-3 py-1 rounded-md text-sm shadow-lg">
+                ⚠️ あと{maxLinesPerPage - lineCount}行でページが自動で切り替わります
               </div>
+            )}
+            <div
+              ref={editorRef}
+              contentEditable
+              role="textbox"
+              aria-label={`${isVertical ? '縦書き' : '横書き'}小説執筆エディタ - ページ ${currentPageIndex + 1}/${pages.length}`}
+              aria-multiline="true"
+              aria-describedby={isMobileView ? undefined : 'editor-stats'}
+              className={`w-full h-full p-8 outline-none resize-none text-lg leading-relaxed editor-focus text-black ${
+                isVertical
+                  ? 'writing-mode-vertical-rl text-orientation-upright'
+                  : 'writing-mode-horizontal-tb'
+              }`}
+              style={{
+                writingMode: isVertical ? 'vertical-rl' : 'horizontal-tb',
+                textOrientation: isVertical ? 'upright' : 'mixed',
+                fontFamily: editorFontFamily,
+                color: '#000000',
+                caretColor: '#000000'
+              }}
+              onInput={handleEditorChange}
+              onPaste={handlePaste}
+              onKeyDown={handleKeyDown}
+              suppressContentEditableWarning={true}
+              data-writing-mode={isVertical ? 'vertical' : 'horizontal'}
+              data-content-type="novel-manuscript"
+            />
+          </>
+        ) : (
+          <ContinuousScrollEditor
+            value={continuousHtml || joinPagesForContinuous(pages)}
+            isVertical={isVertical}
+            editorFontFamily={editorFontFamily}
+            onChange={handleContinuousContentChange}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+          />
+        )}
+      </div>
 
       {/* 極小ステータスバー */}
       {!isMobileView && (
