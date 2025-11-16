@@ -46,6 +46,30 @@ export const documents = sqliteTable(
   })
 );
 
+export const documentRevisions = sqliteTable(
+  'document_revisions',
+  {
+    id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+    documentId: text('document_id')
+      .notNull()
+      .references(() => documents.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    content: text('content').notNull(),
+    pagesJson: text('pages_json'),
+    createdAt: integer('created_at', { mode: 'number' })
+      .notNull()
+      .default(sql`(unixepoch('now') * 1000)`),
+  },
+  (table) => ({
+    documentIdx: index('idx_document_revisions_document').on(table.documentId),
+    userIdx: index('idx_document_revisions_user').on(table.userId),
+  })
+);
+
 export type User = typeof users.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type Document = typeof documents.$inferSelect;
+export type DocumentRevision = typeof documentRevisions.$inferSelect;

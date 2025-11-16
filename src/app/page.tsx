@@ -27,6 +27,7 @@ type AuthMode = 'login' | 'signup';
 const PAGE_BREAK_SENTINEL = '\n\n=== tategaki:page-break ===\n\n';
 const DEFAULT_DOCUMENT_TITLE = '無題';
 const DEFAULT_MAX_LINES_PER_PAGE = 30;
+const DEFAULT_REVISION_INTERVAL_MINUTES = 10;
 const FONT_PRESETS = {
   classic: {
     label: '明朝体',
@@ -72,6 +73,40 @@ const serializePagesToPlainText = (pages: Page[]) => {
   return plainTextPages.join(PAGE_BREAK_SENTINEL);
 };
 
+type RevisionEntry = {
+  id: string;
+  title: string;
+  createdAt: number;
+  content: string;
+  pages: Page[];
+};
+
+const normalizePagesPayload = (pagesPayload: unknown, fallbackContent?: string): Page[] => {
+  if (Array.isArray(pagesPayload) && pagesPayload.length > 0) {
+    return pagesPayload.map((page: any, index: number) => ({
+      id: typeof page?.id === 'string' ? page.id : String(index + 1),
+      content: typeof page?.content === 'string' ? page.content : '',
+    }));
+  }
+
+  const safeContent = typeof fallbackContent === 'string' ? fallbackContent : '';
+  return [
+    {
+      id: '1',
+      content: safeContent ? safeContent.replace(/\n/g, '<br>') : '',
+    },
+  ];
+};
+
+const formatRevisionTimestamp = (timestamp: number) => {
+  const date = new Date(timestamp);
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${month}/${day} ${hours}:${minutes}`;
+};
+
 export default function TategakiEditor() {
   const [pages, setPages] = useState<Page[]>([{ id: '1', content: '' }]);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
@@ -110,6 +145,13 @@ export default function TategakiEditor() {
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
   const [settingsFontDraft, setSettingsFontDraft] = useState<FontPresetKey>('classic');
   const [settingsMaxLinesDraft, setSettingsMaxLinesDraft] = useState(DEFAULT_MAX_LINES_PER_PAGE);
+  const [revisionIntervalMinutes, setRevisionIntervalMinutes] = useState(DEFAULT_REVISION_INTERVAL_MINUTES);
+  const [settingsRevisionIntervalDraft, setSettingsRevisionIntervalDraft] = useState(
+    DEFAULT_REVISION_INTERVAL_MINUTES
+  );
+  const [revisionTimeline, setRevisionTimeline] = useState<RevisionEntry[]>([]);
+  const [revisionSliderIndex, setRevisionSliderIndex] = useState(0);
+  const [isRevisionTimelineLoading, setIsRevisionTimelineLoading] = useState(false);
   const [documentTitle, setDocumentTitle] = useState(DEFAULT_DOCUMENT_TITLE);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -124,6 +166,8 @@ export default function TategakiEditor() {
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const saveDocumentToCloudRef = useRef<(() => Promise<void>) | null>(null);
+  const lastRevisionSavedAtRef = useRef<number | null>(null);
+  const suppressAutoSaveRef = useRef(false);
   const [isMobileView, setIsMobileView] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const activeCloudDocument = useMemo(() => {
@@ -137,6 +181,10 @@ export default function TategakiEditor() {
   const clampMaxLines = (value: number) => {
     if (Number.isNaN(value)) return DEFAULT_MAX_LINES_PER_PAGE;
     return Math.min(200, Math.max(10, Math.round(value)));
+  };
+  const clampRevisionInterval = (value: number) => {
+    if (Number.isNaN(value)) return DEFAULT_REVISION_INTERVAL_MINUTES;
+    return Math.min(120, Math.max(1, Math.round(value)));
   };
 
 
@@ -194,32 +242,57 @@ export default function TategakiEditor() {
     if (!editorRef.current) return 1;
 
     const element = editorRef.current;
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    const rects = Array.from(range.getClientRects()).filter(
-      (rect) => rect.width > 0.5 && rect.height > 0.5
-    );
+    const positions: number[] = [];
+    const tolerance = 1.5;
 
-    const tolerance = 1; // px
-    if (rects.length > 0) {
-      const positions: number[] = [];
-      rects.forEach((rect) => {
-        const position = isVertical ? rect.left : rect.top;
-        const exists = positions.some((pos) => Math.abs(pos - position) < tolerance);
-        if (!exists) {
-          positions.push(position);
-        }
-      });
-      if (positions.length > 0) {
-        console.log('Rendered line boxes detected:', positions.length);
-        return positions.length;
+    const addPosition = (value: number) => {
+      const rounded = Math.round(value * 10) / 10;
+      const exists = positions.some((pos) => Math.abs(pos - rounded) < tolerance);
+      if (!exists) {
+        positions.push(rounded);
       }
+    };
+
+    const collectRectsFromRange = (range: Range) => {
+      const rectList = range.getClientRects();
+      for (let i = 0; i < rectList.length; i++) {
+        const rect = rectList.item(i);
+        if (!rect) continue;
+        if (rect.width <= 0.2 || rect.height <= 0.2) continue;
+        const position = isVertical ? rect.left : rect.top;
+        addPosition(position);
+      }
+    };
+
+    const textRange = document.createRange();
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let currentNode: Node | null;
+
+    while ((currentNode = walker.nextNode())) {
+      const content = currentNode.textContent;
+      if (!content || !content.trim()) continue;
+      try {
+        textRange.selectNodeContents(currentNode);
+        collectRectsFromRange(textRange);
+      } catch (error) {
+        console.warn('Range selection failed for node', error);
+      }
+    }
+
+    element.querySelectorAll('br').forEach((br) => {
+      const brRange = document.createRange();
+      brRange.setStartBefore(br);
+      brRange.setEndAfter(br);
+      collectRectsFromRange(brRange);
+    });
+
+    if (positions.length > 0) {
+      positions.sort((a, b) => (isVertical ? b - a : a - b));
+      return positions.length;
     }
 
     // fallback: use previous estimation based on text metrics
     const plainText = element.innerText || '';
-    console.log('Fallback plain text length:', plainText.length);
-
     if (isVertical) {
       const lines = plainText.split('\n');
       const rect = element.getBoundingClientRect();
@@ -240,20 +313,10 @@ export default function TategakiEditor() {
         return sum + Math.max(1, requiredColumns);
       }, 0);
 
-      console.log(
-        'Fallback vertical mode - lines:',
-        lines.length,
-        'maxCharsPerColumn:',
-        maxCharsPerColumn,
-        'columnCount:',
-        columnCount
-      );
       return Math.max(1, columnCount);
     } else {
       const lines = plainText.split('\n');
-      const actualLineCount = lines.length;
-      console.log('Fallback horizontal mode - actualLineCount:', actualLineCount);
-      return Math.max(1, actualLineCount);
+      return Math.max(1, lines.length);
     }
   };
 
@@ -365,7 +428,9 @@ export default function TategakiEditor() {
       const actualLines = calculateActualContentLines();
       setLineCount(actualLines);
       
-      if (isAutoSaveEnabled && user) {
+      if (suppressAutoSaveRef.current) {
+        suppressAutoSaveRef.current = false;
+      } else if (isAutoSaveEnabled && user) {
         setAutoSaveSignal((signal) => signal + 1);
       }
       
@@ -521,10 +586,14 @@ export default function TategakiEditor() {
   // 全ページを削除
   const deleteAllPages = () => {
     if (confirm('すべてのページを削除してもよろしいですか？')) {
+      suppressAutoSaveRef.current = true;
       setPages([{ id: '1', content: '' }]);
       setCurrentPageIndex(0);
       setActiveDocumentId(null);
       setDocumentTitle(DEFAULT_DOCUMENT_TITLE);
+      setRevisionTimeline([]);
+      setRevisionSliderIndex(0);
+      lastRevisionSavedAtRef.current = null;
       // 削除後にフォーカスを戻す
       setTimeout(() => {
         editorRef.current?.focus();
@@ -607,9 +676,13 @@ export default function TategakiEditor() {
           newPages.push({ id: '1', content: '' });
         }
         
+        suppressAutoSaveRef.current = true;
         setPages(newPages);
         setCurrentPageIndex(0);
         setActiveDocumentId(null);
+        setRevisionTimeline([]);
+        setRevisionSliderIndex(0);
+        lastRevisionSavedAtRef.current = null;
         if (file.name) {
           const nameWithoutExt = file.name.replace(/\.[^.]+$/, '');
           setDocumentTitle(nameWithoutExt || DEFAULT_DOCUMENT_TITLE);
@@ -681,6 +754,43 @@ export default function TategakiEditor() {
     }
   }, [user]);
 
+  const fetchDocumentRevisions = useCallback(
+    async (documentId: string) => {
+      if (!user || !documentId) return;
+      setIsRevisionTimelineLoading(true);
+      try {
+        const response = await fetch(`/api/cloud/documents/${documentId}/revisions`);
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data?.error || 'リビジョンの取得に失敗しました');
+        }
+
+        const timeline: RevisionEntry[] = Array.isArray(data.revisions)
+          ? data.revisions.map((rev: any) => ({
+              id:
+                typeof rev.id === 'string' && rev.id.length > 0
+                  ? rev.id
+                  : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+              title: typeof rev.title === 'string' && rev.title.length > 0 ? rev.title : DEFAULT_DOCUMENT_TITLE,
+              createdAt: typeof rev.createdAt === 'number' ? rev.createdAt : Date.now(),
+              content: typeof rev.content === 'string' ? rev.content : '',
+              pages: normalizePagesPayload(rev.pages, typeof rev.content === 'string' ? rev.content : ''),
+            }))
+          : [];
+
+        timeline.sort((a, b) => a.createdAt - b.createdAt);
+        setRevisionTimeline(timeline);
+        setRevisionSliderIndex(timeline.length > 0 ? timeline.length - 1 : 0);
+        lastRevisionSavedAtRef.current = timeline.length > 0 ? timeline[timeline.length - 1].createdAt : null;
+      } catch (error) {
+        console.error('Revisions fetch error', error);
+      } finally {
+        setIsRevisionTimelineLoading(false);
+      }
+    },
+    [user]
+  );
+
   const handleAuthSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setAuthError(null);
@@ -742,6 +852,9 @@ export default function TategakiEditor() {
       setUser(null);
       setCloudDocuments([]);
       setActiveDocumentId(null);
+      setRevisionTimeline([]);
+      setRevisionSliderIndex(0);
+      lastRevisionSavedAtRef.current = null;
       setCloudStatus({ message: 'ログアウトしました', tone: 'success' });
     }
   };
@@ -770,6 +883,7 @@ export default function TategakiEditor() {
   const openSettingsDialog = () => {
     setSettingsFontDraft(editorFontKey);
     setSettingsMaxLinesDraft(maxLinesPerPage);
+    setSettingsRevisionIntervalDraft(revisionIntervalMinutes);
     setShowSettingsDialog(true);
   };
 
@@ -779,14 +893,50 @@ export default function TategakiEditor() {
 
   const handleSettingsSave = () => {
     const normalizedMaxLines = clampMaxLines(settingsMaxLinesDraft);
+    const normalizedRevisionInterval = clampRevisionInterval(settingsRevisionIntervalDraft);
     setEditorFontKey(settingsFontDraft);
     setMaxLinesPerPage(normalizedMaxLines);
     setSettingsMaxLinesDraft(normalizedMaxLines);
+    setRevisionIntervalMinutes(normalizedRevisionInterval);
+    setSettingsRevisionIntervalDraft(normalizedRevisionInterval);
     if (typeof window !== 'undefined') {
       localStorage.setItem('tategaki-font', settingsFontDraft);
       localStorage.setItem('tategaki-max-lines', String(normalizedMaxLines));
+      localStorage.setItem('tategaki-revision-interval', String(normalizedRevisionInterval));
     }
     setShowSettingsDialog(false);
+  };
+
+  const applyRevisionToEditor = (revision: RevisionEntry, options?: { silent?: boolean }) => {
+    if (!revision) return;
+    suppressAutoSaveRef.current = true;
+    const nextPages =
+      revision.pages.length > 0
+        ? revision.pages.map((page) => ({ ...page }))
+        : normalizePagesPayload(undefined, revision.content);
+    setPages(nextPages.length > 0 ? nextPages : [{ id: '1', content: '' }]);
+    setCurrentPageIndex(0);
+    setDocumentTitle(revision.title || DEFAULT_DOCUMENT_TITLE);
+    if (!options?.silent) {
+      setCloudStatus({
+        message: `${formatRevisionTimestamp(revision.createdAt)} のリビジョンを読み込みました`,
+        tone: 'success',
+      });
+    }
+    setTimeout(() => {
+      editorRef.current?.focus();
+      moveCursorToEnd();
+    }, 50);
+  };
+
+  const handleRevisionSliderChange = (index: number) => {
+    if (!revisionTimeline.length) return;
+    const clamped = Math.min(Math.max(Number(index), 0), revisionTimeline.length - 1);
+    setRevisionSliderIndex(clamped);
+    const revision = revisionTimeline[clamped];
+    if (revision) {
+      applyRevisionToEditor(revision);
+    }
   };
 
   const saveDocumentToCloud = async () => {
@@ -798,6 +948,12 @@ export default function TategakiEditor() {
 
     setIsCloudSaving(true);
     try {
+      const now = Date.now();
+      const revisionIntervalMs = revisionIntervalMinutes * 60 * 1000;
+      const shouldCreateRevision =
+        !lastRevisionSavedAtRef.current ||
+        now - lastRevisionSavedAtRef.current >= revisionIntervalMs;
+
       const plainText = serializePagesToPlainText(pages);
       const normalizedTitle = documentTitle.trim() || DEFAULT_DOCUMENT_TITLE;
       const response = await fetch('/api/cloud/documents', {
@@ -808,6 +964,7 @@ export default function TategakiEditor() {
           title: normalizedTitle,
           content: plainText,
           pages,
+          createRevision: shouldCreateRevision,
         }),
       });
 
@@ -819,7 +976,14 @@ export default function TategakiEditor() {
       if (data.document?.title) {
         setDocumentTitle(data.document.title);
       }
-      setActiveDocumentId(data.document?.id ?? null);
+      const savedDocumentId = data.document?.id ?? activeDocumentId;
+      setActiveDocumentId(savedDocumentId ?? null);
+      if (shouldCreateRevision) {
+        lastRevisionSavedAtRef.current = now;
+      }
+      if (savedDocumentId && shouldCreateRevision) {
+        fetchDocumentRevisions(savedDocumentId);
+      }
       setCloudStatus({ message: 'クラウドに保存しました', tone: 'success' });
       fetchCloudDocuments();
     } catch (error) {
@@ -861,25 +1025,21 @@ export default function TategakiEditor() {
         throw new Error(data?.error || 'クラウドデータの取得に失敗しました');
       }
 
-      const remotePages: Page[] = Array.isArray(data.document?.pages)
-        ? data.document.pages.map((page: any, index: number) => ({
-            id: typeof page.id === 'string' ? page.id : String(index + 1),
-            content: typeof page.content === 'string' ? page.content : '',
-          }))
-        : [
-            {
-              id: '1',
-              content: (data.document?.content || '').replace(/\n/g, '<br>'),
-            },
-          ];
+      const remotePages = normalizePagesPayload(
+        data.document?.pages,
+        typeof data.document?.content === 'string' ? data.document.content : ''
+      );
 
+      suppressAutoSaveRef.current = true;
       setPages(remotePages.length > 0 ? remotePages : [{ id: '1', content: '' }]);
       setCurrentPageIndex(0);
       setActiveDocumentId(documentId);
+      lastRevisionSavedAtRef.current = null;
       setDocumentTitle(data.document?.title || DEFAULT_DOCUMENT_TITLE);
       setShowCloudDialog(false);
       setCloudStatus({ message: 'クラウドから読み込みました', tone: 'success' });
       setIsEditingTitle(false);
+      fetchDocumentRevisions(documentId);
 
       setTimeout(() => {
         editorRef.current?.focus();
@@ -914,6 +1074,9 @@ export default function TategakiEditor() {
 
       if (activeDocumentId === documentId) {
         setActiveDocumentId(null);
+        setRevisionTimeline([]);
+        setRevisionSliderIndex(0);
+        lastRevisionSavedAtRef.current = null;
         setCloudStatus({
           message: 'クラウド保存されたデータを削除しました',
           tone: 'success',
@@ -995,6 +1158,8 @@ export default function TategakiEditor() {
     if (!user) {
       setCloudDocuments([]);
       setActiveDocumentId(null);
+      setRevisionTimeline([]);
+      setRevisionSliderIndex(0);
       return;
     }
     fetchCloudDocuments();
@@ -1075,6 +1240,11 @@ export default function TategakiEditor() {
     if (!Number.isNaN(storedMaxLines) && storedMaxLines >= 10 && storedMaxLines <= 200) {
       setMaxLinesPerPage(storedMaxLines);
       setSettingsMaxLinesDraft(storedMaxLines);
+    }
+    const storedRevisionInterval = Number(localStorage.getItem('tategaki-revision-interval'));
+    if (!Number.isNaN(storedRevisionInterval) && storedRevisionInterval >= 1 && storedRevisionInterval <= 120) {
+      setRevisionIntervalMinutes(storedRevisionInterval);
+      setSettingsRevisionIntervalDraft(storedRevisionInterval);
     }
   }, []);
 
@@ -1166,6 +1336,15 @@ export default function TategakiEditor() {
       variant === 'desktop'
         ? 'flex items-center gap-1 flex-wrap justify-end'
         : 'flex flex-wrap gap-2 items-center w-full';
+    const hasRevisions = Boolean(activeDocumentId && revisionTimeline.length > 0);
+    const revisionSliderMax = Math.max(revisionTimeline.length - 1, 0);
+    const safeRevisionIndex = Math.min(revisionSliderIndex, revisionSliderMax);
+    const sliderDenominator = Math.max(revisionTimeline.length - 1, 1);
+    const revisionSliderPercent =
+      revisionTimeline.length <= 1
+        ? 100
+        : (safeRevisionIndex / sliderDenominator) * 100;
+    const currentRevision = revisionTimeline[safeRevisionIndex];
 
     return (
       <div className={containerClass}>
@@ -1358,6 +1537,62 @@ export default function TategakiEditor() {
           </button>
 
           <div className="w-px h-4 bg-gray-300 mx-1"></div>
+
+          {hasRevisions && (
+            <div className="flex items-center gap-2 px-2 min-w-[230px]">
+              <div className="flex flex-col text-[10px] text-gray-500 leading-tight">
+                <span>リビジョン</span>
+                {isRevisionTimelineLoading ? (
+                  <span className="text-gray-400">更新中...</span>
+                ) : (
+                  <span className="text-gray-400">
+                    {safeRevisionIndex + 1}/{revisionTimeline.length}
+                  </span>
+                )}
+              </div>
+              <div className="relative h-4 w-40">
+                <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-1 rounded-full bg-gray-200"></div>
+                <div
+                  className="absolute left-0 top-1/2 -translate-y-1/2 h-1 rounded-full bg-gradient-to-r from-blue-400 to-blue-600"
+                  style={{ width: `${revisionSliderPercent}%` }}
+                ></div>
+                <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 pointer-events-none">
+                  {revisionTimeline.map((revision, index) => {
+                    const percent =
+                      revisionTimeline.length <= 1
+                        ? 100
+                        : (index / sliderDenominator) * 100;
+                    return (
+                      <span
+                        key={revision.id}
+                        className={`absolute w-1.5 h-1.5 rounded-full ${
+                          index <= safeRevisionIndex ? 'bg-blue-500' : 'bg-gray-300'
+                        }`}
+                        style={{ left: `calc(${percent}% - 3px)` }}
+                      ></span>
+                    );
+                  })}
+                </div>
+                <div
+                  className="absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-white shadow bg-blue-500 pointer-events-none"
+                  style={{ left: `calc(${revisionSliderPercent}% - 8px)` }}
+                ></div>
+                <input
+                  type="range"
+                  min={0}
+                  max={revisionSliderMax}
+                  value={safeRevisionIndex}
+                  disabled={revisionTimeline.length <= 1 || isRevisionTimelineLoading}
+                  onChange={(event) => handleRevisionSliderChange(Number(event.target.value))}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  aria-label="リビジョンタイムライン"
+                />
+              </div>
+              <div className="text-[10px] text-gray-500 w-16 text-right leading-tight">
+                {currentRevision ? formatRevisionTimestamp(currentRevision.createdAt) : '---'}
+              </div>
+            </div>
+          )}
 
           <label
             className={`flex items-center gap-1 border rounded px-2 py-1 text-[10px] ${
@@ -2189,6 +2424,23 @@ export default function TategakiEditor() {
                 />
                 <p className="text-xs text-gray-500 mt-1">
                   設定した行数を超えた場合、自動的に次のページに分割されます。
+                </p>
+              </div>
+              <div>
+                <label className="text-sm font-semibold text-gray-800 mb-2 flex items-center justify-between">
+                  リビジョン間隔
+                  <span className="text-xs text-gray-500">1〜120分</span>
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={120}
+                  value={settingsRevisionIntervalDraft}
+                  onChange={(e) => setSettingsRevisionIntervalDraft(clampRevisionInterval(Number(e.target.value)))}
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-black"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  この間隔より短い自動保存では新しいリビジョンを作成しません。
                 </p>
               </div>
             </div>

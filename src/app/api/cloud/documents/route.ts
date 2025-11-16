@@ -3,7 +3,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { getDb } from '@/db/client';
-import { documents } from '@/db/schema';
+import { documentRevisions, documents } from '@/db/schema';
 
 import { getSessionUser } from '../../_lib/auth';
 
@@ -14,6 +14,7 @@ const saveSchema = z.object({
   pages: z
     .array(z.object({ id: z.string(), content: z.string() }))
     .optional(),
+  createRevision: z.boolean().optional(),
 });
 
 export async function GET() {
@@ -99,6 +100,18 @@ export async function POST(request: Request) {
         { error: '対象のテキストが見つかりません' },
         { status: 404 }
       );
+    }
+
+    const shouldCreateRevision = payload.createRevision !== false;
+    if (savedDocument && shouldCreateRevision) {
+      await db.insert(documentRevisions).values({
+        documentId: savedDocument.id,
+        userId: session.user.id,
+        title: payload.title,
+        content: payload.content,
+        pagesJson: payload.pages ? JSON.stringify(payload.pages) : null,
+        createdAt: now,
+      });
     }
 
     return NextResponse.json({ document: savedDocument });
