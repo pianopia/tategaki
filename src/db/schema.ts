@@ -69,7 +69,29 @@ export const documentRevisions = sqliteTable(
   })
 );
 
+export const userPreferences = sqliteTable(
+  'user_preferences',
+  {
+    id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    preferences: text('preferences'),
+    updatedAt: integer('updated_at', { mode: 'number' })
+      .notNull()
+      .default(sql`(unixepoch('now') * 1000)`),
+    createdAt: integer('created_at', { mode: 'number' })
+      .notNull()
+      .default(sql`(unixepoch('now') * 1000)`),
+  },
+  (table) => ({
+    userIdx: index('idx_user_preferences_user').on(table.userId),
+  })
+);
+
 export type User = typeof users.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type Document = typeof documents.$inferSelect;
 export type DocumentRevision = typeof documentRevisions.$inferSelect;
+export type UserPreference = typeof userPreferences.$inferSelect;
+export type UserPreferenceInsert = typeof userPreferences.$inferInsert;

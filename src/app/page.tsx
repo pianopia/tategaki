@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FiEye, FiSettings, FiTrash, FiTrash2 } from 'react-icons/fi';
 
 import ContinuousScrollEditor from '@/components/ContinuousScrollEditor';
+import { PreferencesDialog } from '@/components/PreferencesDialog';
 
 type Page = {
   id: string;
@@ -199,6 +200,11 @@ export default function TategakiEditor() {
   const suppressAutoSaveRef = useRef(false);
   const [isMobileView, setIsMobileView] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [showPreferencesDialog, setShowPreferencesDialog] = useState(false);
+  const [editorTheme, setEditorTheme] = useState<'light' | 'dark' | 'custom'>('light');
+  const [editorBackgroundColor, setEditorBackgroundColor] = useState('#FFFFFF');
+  const [editorTextColor, setEditorTextColor] = useState('#000000');
+  const [editorKeybindings, setEditorKeybindings] = useState<Record<string, string>>({});
   const activeCloudDocument = useMemo(() => {
     if (!activeDocumentId) return null;
     return cloudDocuments.find(doc => doc.id === activeDocumentId) ?? null;
@@ -1029,31 +1035,47 @@ export default function TategakiEditor() {
   };
 
   const openSettingsDialog = () => {
-    setSettingsFontDraft(editorFontKey);
-    setSettingsMaxLinesDraft(maxLinesPerPage);
-    setSettingsRevisionIntervalDraft(revisionIntervalMinutes);
-    setShowSettingsDialog(true);
+    setShowPreferencesDialog(true);
   };
 
   const closeSettingsDialog = () => {
-    setShowSettingsDialog(false);
+    setShowPreferencesDialog(false);
   };
 
-const handleSettingsSave = () => {
-  const normalizedMaxLines = clampMaxLines(settingsMaxLinesDraft);
-  const normalizedRevisionInterval = clampRevisionInterval(settingsRevisionIntervalDraft);
-  setEditorFontKey(settingsFontDraft);
-  setMaxLinesPerPage(normalizedMaxLines);
-  setSettingsMaxLinesDraft(normalizedMaxLines);
-  setRevisionIntervalMinutes(normalizedRevisionInterval);
-  setSettingsRevisionIntervalDraft(normalizedRevisionInterval);
-  if (typeof window !== 'undefined') {
-    localStorage.setItem('tategaki-font', settingsFontDraft);
-    localStorage.setItem('tategaki-max-lines', String(normalizedMaxLines));
-    localStorage.setItem('tategaki-revision-interval', String(normalizedRevisionInterval));
-  }
-  setShowSettingsDialog(false);
-};
+  const handlePreferencesChange = (prefs: {
+    theme: 'light' | 'dark' | 'custom';
+    backgroundColor: string;
+    textColor: string;
+    fontPreset: 'classic' | 'modern' | 'neutral' | 'mono';
+    maxLinesPerPage: number;
+    editorMode: 'paged' | 'continuous';
+    autoSave: boolean;
+    revisionIntervalMinutes: number;
+    keybindings: Record<string, string>;
+  }) => {
+    console.log('Applying preferences:', prefs);
+    setEditorTheme(prefs.theme);
+    setEditorBackgroundColor(prefs.backgroundColor);
+    setEditorTextColor(prefs.textColor);
+    setEditorFontKey(prefs.fontPreset);
+    setSettingsFontDraft(prefs.fontPreset);
+    setMaxLinesPerPage(prefs.maxLinesPerPage);
+    setSettingsMaxLinesDraft(prefs.maxLinesPerPage);
+    setEditorMode(prefs.editorMode);
+    setIsAutoSaveEnabled(prefs.autoSave);
+    setRevisionIntervalMinutes(prefs.revisionIntervalMinutes);
+    setSettingsRevisionIntervalDraft(prefs.revisionIntervalMinutes);
+    setEditorKeybindings(prefs.keybindings);
+
+    // Also update localStorage for non-logged-in users
+    if (typeof window !== 'undefined' && !user) {
+      localStorage.setItem('tategaki-font', prefs.fontPreset);
+      localStorage.setItem('tategaki-max-lines', String(prefs.maxLinesPerPage));
+      localStorage.setItem('tategaki-revision-interval', String(prefs.revisionIntervalMinutes));
+      localStorage.setItem('tategaki-auto-save', String(prefs.autoSave));
+      localStorage.setItem('tategaki-editor-mode', prefs.editorMode);
+    }
+  };
 
   const applyRevisionToEditor = (revision: RevisionEntry, options?: { silent?: boolean }) => {
     if (!revision) return;
@@ -1390,37 +1412,81 @@ const handleSettingsSave = () => {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const storedAutoSave = localStorage.getItem('tategaki-auto-save');
-    if (storedAutoSave === 'true') {
-      setIsAutoSaveEnabled(true);
-    }
-    const storedFont = localStorage.getItem('tategaki-font');
-    if (storedFont && storedFont in FONT_PRESETS) {
-      setEditorFontKey(storedFont as FontPresetKey);
-      setSettingsFontDraft(storedFont as FontPresetKey);
-    }
-    const storedMaxLines = Number(localStorage.getItem('tategaki-max-lines'));
-    if (!Number.isNaN(storedMaxLines) && storedMaxLines >= 10 && storedMaxLines <= 200) {
-      setMaxLinesPerPage(storedMaxLines);
-      setSettingsMaxLinesDraft(storedMaxLines);
-    }
-    const storedRevisionInterval = Number(localStorage.getItem('tategaki-revision-interval'));
-    if (!Number.isNaN(storedRevisionInterval) && storedRevisionInterval >= 1 && storedRevisionInterval <= 120) {
-      setRevisionIntervalMinutes(storedRevisionInterval);
-      setSettingsRevisionIntervalDraft(storedRevisionInterval);
-    }
 
-    const storedMode =
-      (typeof window !== 'undefined' && (localStorage.getItem('tategaki-editor-mode') as 'paged' | 'continuous')) ||
-      DEFAULT_EDITOR_MODE;
-    if (storedMode === 'continuous' || storedMode === 'paged') {
-      setEditorMode(storedMode);
-    }
-  }, []);
+    const loadPreferences = async () => {
+      if (user) {
+        // Load from API if user is logged in
+        try {
+          const response = await fetch('/api/preferences');
+          if (response.ok) {
+            const prefs = await response.json();
+            setEditorTheme(prefs.theme);
+            setEditorBackgroundColor(prefs.backgroundColor);
+            setEditorTextColor(prefs.textColor);
+            setEditorFontKey(prefs.fontPreset);
+            setSettingsFontDraft(prefs.fontPreset);
+            setMaxLinesPerPage(prefs.maxLinesPerPage);
+            setSettingsMaxLinesDraft(prefs.maxLinesPerPage);
+            setEditorMode(prefs.editorMode);
+            setIsAutoSaveEnabled(prefs.autoSave);
+            setRevisionIntervalMinutes(prefs.revisionIntervalMinutes);
+            setSettingsRevisionIntervalDraft(prefs.revisionIntervalMinutes);
+            setEditorKeybindings(prefs.keybindings);
+          }
+        } catch (error) {
+          console.error('Failed to load preferences from API:', error);
+        }
+      } else {
+        // Fallback to localStorage if not logged in
+        const storedAutoSave = localStorage.getItem('tategaki-auto-save');
+        if (storedAutoSave === 'true') {
+          setIsAutoSaveEnabled(true);
+        }
+        const storedFont = localStorage.getItem('tategaki-font');
+        if (storedFont && storedFont in FONT_PRESETS) {
+          setEditorFontKey(storedFont as FontPresetKey);
+          setSettingsFontDraft(storedFont as FontPresetKey);
+        }
+        const storedMaxLines = Number(localStorage.getItem('tategaki-max-lines'));
+        if (!Number.isNaN(storedMaxLines) && storedMaxLines >= 10 && storedMaxLines <= 200) {
+          setMaxLinesPerPage(storedMaxLines);
+          setSettingsMaxLinesDraft(storedMaxLines);
+        }
+        const storedRevisionInterval = Number(localStorage.getItem('tategaki-revision-interval'));
+        if (!Number.isNaN(storedRevisionInterval) && storedRevisionInterval >= 1 && storedRevisionInterval <= 120) {
+          setRevisionIntervalMinutes(storedRevisionInterval);
+          setSettingsRevisionIntervalDraft(storedRevisionInterval);
+        }
+
+        const storedMode =
+          (typeof window !== 'undefined' && (localStorage.getItem('tategaki-editor-mode') as 'paged' | 'continuous')) ||
+          DEFAULT_EDITOR_MODE;
+        if (storedMode === 'continuous' || storedMode === 'paged') {
+          setEditorMode(storedMode);
+        }
+      }
+    };
+
+    loadPreferences();
+  }, [user]);
 
   useEffect(() => {
     setCharCount(computeTotalChars(pages));
   }, [pages]);
+
+  // Update editor styles when theme changes
+  useEffect(() => {
+    if (editorRef.current) {
+      const bgColor = editorTheme === 'custom' ? editorBackgroundColor : editorTheme === 'dark' ? '#000000' : '#FFFFFF';
+      const txtColor = editorTheme === 'custom' ? editorTextColor : editorTheme === 'dark' ? '#FFFFFF' : '#000000';
+
+      editorRef.current.style.backgroundColor = bgColor;
+      editorRef.current.style.color = txtColor;
+      editorRef.current.style.caretColor = txtColor;
+
+      console.log('Editor style updated:', { bgColor, txtColor, theme: editorTheme });
+    }
+  }, [editorTheme, editorBackgroundColor, editorTextColor]);
 
   useEffect(() => {
     if (editorMode === 'continuous') {
@@ -1521,16 +1587,17 @@ const handleSettingsSave = () => {
       variant === 'desktop'
         ? 'flex items-center gap-2 min-w-0'
         : 'flex items-center gap-2 min-w-0 flex-wrap w-full';
+    const titleColor = editorTheme === 'dark' ? '#e5e7eb' : '#374151';
     const titleClass =
       variant === 'desktop'
-        ? 'text-sm font-medium text-gray-700 whitespace-nowrap mr-4'
-        : 'text-sm font-medium text-gray-700 whitespace-nowrap';
+        ? 'text-sm font-medium whitespace-nowrap mr-4'
+        : 'text-sm font-medium whitespace-nowrap';
     const actionWrapperClass =
       variant === 'desktop'
         ? 'flex items-center gap-1 flex-wrap justify-end'
         : 'flex flex-wrap gap-2 items-center w-full';
     return (
-      <div className={containerClass}>
+      <div className={containerClass} style={{ color: titleColor }}>
         <div className={brandWrapperClass}>
           <div className="w-4 h-4 bg-gray-600 rounded flex items-center justify-center mr-2">
             <span className="text-white text-xs font-bold">縦</span>
@@ -1712,14 +1779,16 @@ const handleSettingsSave = () => {
             ？
           </button>
 
-          <button
-            onClick={openSettingsDialog}
-            className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 flex items-center justify-center"
-            title="エディタ設定"
-            aria-label="設定"
-          >
-            <FiSettings aria-hidden />
-          </button>
+          {user && (
+            <button
+              onClick={openSettingsDialog}
+              className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 flex items-center justify-center"
+              title="エディタ設定"
+              aria-label="設定"
+            >
+              <FiSettings aria-hidden />
+            </button>
+          )}
 
           <div className="flex border border-gray-300 rounded overflow-hidden text-[10px]">
             <button
@@ -1829,10 +1898,11 @@ const handleSettingsSave = () => {
   };
 
   const renderFooterContent = (variant: 'desktop' | 'mobile') => {
+    const footerColor = editorTheme === 'dark' ? '#9ca3af' : '#6b7280';
     const containerClass =
       variant === 'desktop'
-        ? 'flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500'
-        : 'flex flex-col gap-4 text-sm text-gray-600';
+        ? 'flex flex-wrap items-center justify-between gap-3 text-xs'
+        : 'flex flex-col gap-4 text-sm';
     const rowClass =
       variant === 'desktop'
         ? 'flex items-center gap-3 flex-wrap'
@@ -1849,13 +1919,14 @@ const handleSettingsSave = () => {
 
     const linkRowClass =
       variant === 'desktop'
-        ? 'flex items-center gap-4 flex-wrap text-gray-600'
-        : 'flex flex-col gap-2 text-gray-600';
+        ? 'flex items-center gap-4 flex-wrap'
+        : 'flex flex-col gap-2';
 
     return (
       <div
         id={variant === 'desktop' ? 'editor-stats' : undefined}
         className={containerClass}
+        style={{ color: footerColor }}
         aria-live="polite"
       >
         <div className={rowClass}>
@@ -1990,7 +2061,14 @@ const handleSettingsSave = () => {
         <p>Google Geminiを活用した高品質な文章生成機能により、執筆効率を大幅に向上させます。続きの文章生成、対話シーン作成、情景描写の補強など、創作活動を強力にサポートします。</p>
       </div>
       
-      <main className="flex-1 bg-white flex flex-col overflow-hidden" role="application" aria-label="縦書き小説エディタ">
+      <main
+        className="flex-1 flex flex-col overflow-hidden"
+        role="application"
+        aria-label="縦書き小説エディタ"
+        style={{
+          backgroundColor: editorTheme === 'custom' ? editorBackgroundColor : editorTheme === 'dark' ? '#000000' : '#FFFFFF'
+        }}
+      >
       {/* 極小ヘッダー */}
       {isMobileView ? (
         <>
@@ -2039,13 +2117,24 @@ const handleSettingsSave = () => {
           )}
         </>
       ) : (
-        <div className="bg-gray-100/50 border-b border-gray-200 px-2 py-1 flex-shrink-0">
+        <div
+          className="border-b px-2 py-1 flex-shrink-0"
+          style={{
+            backgroundColor: editorTheme === 'dark' ? '#1a1a1a' : '#f9fafb',
+            borderColor: editorTheme === 'dark' ? '#333' : '#e5e7eb'
+          }}
+        >
           {renderHeaderContent('desktop')}
         </div>
       )}
 
       {/* エディタエリア（画面の95%） */}
-      <div className="flex-1 overflow-hidden relative">
+      <div
+        className="flex-1 overflow-hidden relative"
+        style={{
+          backgroundColor: editorTheme === 'custom' ? editorBackgroundColor : editorTheme === 'dark' ? '#000000' : '#FFFFFF'
+        }}
+      >
         {editorMode === 'paged' ? (
           <>
             {lineCount >= maxLinesPerPage * 0.9 && lineCount < maxLinesPerPage && (
@@ -2060,7 +2149,7 @@ const handleSettingsSave = () => {
               aria-label={`${isVertical ? '縦書き' : '横書き'}小説執筆エディタ - ページ ${currentPageIndex + 1}/${pages.length}`}
               aria-multiline="true"
               aria-describedby={isMobileView ? undefined : 'editor-stats'}
-              className={`w-full h-full p-8 outline-none resize-none text-lg leading-relaxed editor-focus text-black ${
+              className={`w-full h-full p-8 outline-none resize-none text-lg leading-relaxed editor-focus ${
                 isVertical
                   ? 'writing-mode-vertical-rl text-orientation-upright'
                   : 'writing-mode-horizontal-tb'
@@ -2069,8 +2158,9 @@ const handleSettingsSave = () => {
                 writingMode: isVertical ? 'vertical-rl' : 'horizontal-tb',
                 textOrientation: isVertical ? 'upright' : 'mixed',
                 fontFamily: editorFontFamily,
-                color: '#000000',
-                caretColor: '#000000'
+                backgroundColor: editorTheme === 'custom' ? editorBackgroundColor : editorTheme === 'dark' ? '#000000' : '#FFFFFF',
+                color: editorTheme === 'custom' ? editorTextColor : editorTheme === 'dark' ? '#FFFFFF' : '#000000',
+                caretColor: editorTheme === 'custom' ? editorTextColor : editorTheme === 'dark' ? '#FFFFFF' : '#000000'
               }}
               onInput={handleEditorChange}
               onPaste={handlePaste}
@@ -2085,6 +2175,8 @@ const handleSettingsSave = () => {
             value={continuousHtml || joinPagesForContinuous(pages)}
             isVertical={isVertical}
             editorFontFamily={editorFontFamily}
+            backgroundColor={editorTheme === 'custom' ? editorBackgroundColor : editorTheme === 'dark' ? '#000000' : '#FFFFFF'}
+            textColor={editorTheme === 'custom' ? editorTextColor : editorTheme === 'dark' ? '#FFFFFF' : '#000000'}
             onChange={handleContinuousContentChange}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
@@ -2094,7 +2186,14 @@ const handleSettingsSave = () => {
 
       {/* 極小ステータスバー */}
       {!isMobileView && (
-        <div className="bg-gray-100/50 border-t border-gray-200 px-3 py-2 flex-shrink-0">
+        <div
+          className="border-t px-3 py-2 flex-shrink-0"
+          style={{
+            backgroundColor: editorTheme === 'dark' ? '#1a1a1a' : '#f9fafb',
+            borderColor: editorTheme === 'dark' ? '#333' : '#e5e7eb',
+            color: editorTheme === 'dark' ? '#e5e7eb' : '#374151'
+          }}
+        >
           {renderFooterContent('desktop')}
         </div>
       )}
@@ -2617,102 +2716,11 @@ const handleSettingsSave = () => {
       )}
 
       {/* 設定ダイアログ */}
-      {showSettingsDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl text-black">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-gray-800">エディタ設定</h3>
-              <button
-                onClick={closeSettingsDialog}
-                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-                aria-label="閉じる"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="space-y-5">
-              <div>
-                <p className="text-sm font-semibold text-gray-800 mb-2">フォント種別</p>
-                <div className="space-y-2">
-                  {(Object.entries(FONT_PRESETS) as [FontPresetKey, (typeof FONT_PRESETS)[FontPresetKey]][]).map(
-                    ([key, preset]) => (
-                      <label
-                        key={key}
-                        className={`flex items-center justify-between border rounded-lg px-3 py-2 cursor-pointer ${
-                          settingsFontDraft === key ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
-                        }`}
-                      >
-                        <div>
-                          <span className="text-sm font-medium text-gray-800">{preset.label}</span>
-                          <p className="text-xs text-gray-500" style={{ fontFamily: preset.stack }}>
-                            あいうえお ABC 123
-                          </p>
-                        </div>
-                        <input
-                          type="radio"
-                          name="editor-font"
-                          value={key}
-                          checked={settingsFontDraft === key}
-                          onChange={() => setSettingsFontDraft(key)}
-                          className="h-4 w-4 text-blue-600"
-                        />
-                      </label>
-                    )
-                  )}
-                </div>
-              </div>
-              <div>
-                <label className="text-sm font-semibold text-gray-800 mb-2 flex items-center justify-between">
-                  最大行数
-                  <span className="text-xs text-gray-500">10〜200行</span>
-                </label>
-                <input
-                  type="number"
-                  min={10}
-                  max={200}
-                  value={settingsMaxLinesDraft}
-                  onChange={(e) => setSettingsMaxLinesDraft(clampMaxLines(Number(e.target.value)))}
-                  className="w-full border border-gray-300 rounded px-3 py-2 text-black"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  設定した行数を超えた場合、自動的に次のページに分割されます。
-                </p>
-              </div>
-              <div>
-                <label className="text-sm font-semibold text-gray-800 mb-2 flex items-center justify-between">
-                  リビジョン間隔
-                  <span className="text-xs text-gray-500">1〜120分</span>
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  max={120}
-                  value={settingsRevisionIntervalDraft}
-                  onChange={(e) => setSettingsRevisionIntervalDraft(clampRevisionInterval(Number(e.target.value)))}
-                  className="w-full border border-gray-300 rounded px-3 py-2 text-black"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  この間隔より短い自動保存では新しいリビジョンを作成しません。
-                </p>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 mt-6">
-              <button
-                onClick={closeSettingsDialog}
-                className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-100"
-              >
-                キャンセル
-              </button>
-              <button
-                onClick={handleSettingsSave}
-                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-              >
-                保存
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <PreferencesDialog
+        isOpen={showPreferencesDialog}
+        onClose={closeSettingsDialog}
+        onPreferencesChange={handlePreferencesChange}
+      />
 
       {cloudStatus && (
         <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2">
