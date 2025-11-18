@@ -46,6 +46,7 @@ export function PreferencesDialog({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<'appearance' | 'editor' | 'keybindings'>('appearance');
+  const [recordingKey, setRecordingKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -102,6 +103,46 @@ export function PreferencesDialog({
     value: Preferences[K]
   ) => {
     setPreferences((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleKeyRecording = (e: React.KeyboardEvent<HTMLInputElement>, bindingKey: string) => {
+    if (!recordingKey || recordingKey !== bindingKey) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Ignore modifier keys alone
+    if (['Control', 'Meta', 'Alt', 'Shift'].includes(e.key)) {
+      return;
+    }
+
+    const parts: string[] = [];
+
+    // Add modifiers
+    if (e.ctrlKey) parts.push('Ctrl');
+    if (e.metaKey) parts.push('Cmd');
+    if (e.altKey) parts.push('Alt');
+    if (e.shiftKey) parts.push('Shift');
+
+    // Add the main key
+    let mainKey = e.key;
+    // Capitalize single letters
+    if (mainKey.length === 1) {
+      mainKey = mainKey.toUpperCase();
+    }
+    parts.push(mainKey);
+
+    const keyCombo = parts.join('+');
+
+    // Update keybindings
+    const newKeybindings = {
+      ...preferences.keybindings,
+      [bindingKey]: keyCombo,
+    };
+    updatePreference('keybindings', newKeybindings);
+
+    // Stop recording
+    setRecordingKey(null);
   };
 
   if (!isOpen) return null;
@@ -355,30 +396,49 @@ export function PreferencesDialog({
               {activeTab === 'keybindings' && (
                 <div className="space-y-4">
                   <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Customize keyboard shortcuts for common actions
+                    Click the button and press the key combination you want to use
                   </p>
                   {Object.entries(DEFAULT_KEYBINDINGS).map(([key, { action }]) => (
                     <div key={key} className="flex items-center gap-4">
                       <label className="flex-1 text-sm font-medium text-gray-700 dark:text-gray-300">
                         {action}
                       </label>
-                      <input
-                        type="text"
-                        value={preferences.keybindings[key] || DEFAULT_KEYBINDINGS[key].key}
-                        onChange={(e) => {
-                          const newKeybindings = {
-                            ...preferences.keybindings,
-                            [key]: e.target.value,
-                          };
-                          updatePreference('keybindings', newKeybindings);
-                        }}
-                        placeholder={DEFAULT_KEYBINDINGS[key].key}
-                        className="w-48 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
-                      />
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={
+                            recordingKey === key
+                              ? 'Press any key...'
+                              : preferences.keybindings[key] || DEFAULT_KEYBINDINGS[key].key
+                          }
+                          onKeyDown={(e) => handleKeyRecording(e, key)}
+                          onFocus={() => setRecordingKey(key)}
+                          onBlur={() => setRecordingKey(null)}
+                          placeholder={DEFAULT_KEYBINDINGS[key].key}
+                          className={`w-40 px-3 py-2 border rounded-md text-sm text-center ${
+                            recordingKey === key
+                              ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300'
+                              : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white'
+                          }`}
+                          readOnly
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const newKeybindings = { ...preferences.keybindings };
+                            delete newKeybindings[key];
+                            updatePreference('keybindings', newKeybindings);
+                          }}
+                          className="px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-md border border-gray-300 dark:border-gray-600"
+                          title="Reset to default"
+                        >
+                          Reset
+                        </button>
+                      </div>
                     </div>
                   ))}
                   <p className="text-xs text-gray-500 dark:text-gray-500 mt-4">
-                    Use modifiers: Ctrl, Cmd, Alt, Shift + Key (e.g., Ctrl+S, Cmd+K)
+                    Click on the input field and press your desired key combination
                   </p>
                 </div>
               )}

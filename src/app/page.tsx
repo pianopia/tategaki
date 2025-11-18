@@ -611,18 +611,64 @@ export default function TategakiEditor() {
     }
   };
 
+  // Default keybindings
+  const DEFAULT_KEYBINDINGS: Record<string, string> = {
+    addPage: 'Ctrl+Enter',
+    aiPrompt: 'Cmd+K',
+    nextPage: 'Shift+ArrowLeft',
+    prevPage: 'Shift+ArrowRight',
+  };
+
+  // Helper function to check if pressed key matches a keybinding
+  const matchesKeybinding = (e: React.KeyboardEvent, keybinding: string): boolean => {
+    const parts = keybinding.split('+');
+    const mainKey = parts[parts.length - 1];
+
+    // Normalize the key for comparison
+    let eventKey = e.key;
+    if (eventKey.length === 1) {
+      eventKey = eventKey.toUpperCase();
+    }
+
+    // Check main key
+    const mainKeyMatches = eventKey === mainKey ||
+                          (mainKey === 'ArrowLeft' && eventKey === 'ArrowLeft') ||
+                          (mainKey === 'ArrowRight' && eventKey === 'ArrowRight');
+
+    if (!mainKeyMatches) return false;
+
+    // Check modifiers
+    const hasCtrl = parts.includes('Ctrl');
+    const hasCmd = parts.includes('Cmd');
+    const hasAlt = parts.includes('Alt');
+    const hasShift = parts.includes('Shift');
+
+    return e.ctrlKey === hasCtrl &&
+           e.metaKey === hasCmd &&
+           e.altKey === hasAlt &&
+           e.shiftKey === hasShift;
+  };
+
   // キーボードショートカット
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.ctrlKey && e.key === 'Enter') {
+    // Get active keybindings (user configured or defaults)
+    const activeKeybindings = {
+      addPage: editorKeybindings.addPage || DEFAULT_KEYBINDINGS.addPage,
+      aiPrompt: editorKeybindings.aiPrompt || DEFAULT_KEYBINDINGS.aiPrompt,
+      nextPage: editorKeybindings.nextPage || DEFAULT_KEYBINDINGS.nextPage,
+      prevPage: editorKeybindings.prevPage || DEFAULT_KEYBINDINGS.prevPage,
+    };
+
+    if (editorMode === 'paged' && matchesKeybinding(e, activeKeybindings.addPage)) {
       e.preventDefault();
       addNewPage();
-    } else if (e.metaKey && e.key === 'k') {
+    } else if (matchesKeybinding(e, activeKeybindings.aiPrompt)) {
       e.preventDefault();
       openPromptDialog();
-    } else if (e.shiftKey && e.key === 'ArrowLeft') {
+    } else if (editorMode === 'paged' && matchesKeybinding(e, activeKeybindings.nextPage)) {
       e.preventDefault();
       goToPage(currentPageIndex + 1); // 左矢印で次のページへ（縦書きでは左が進む方向）
-    } else if (e.shiftKey && e.key === 'ArrowRight') {
+    } else if (editorMode === 'paged' && matchesKeybinding(e, activeKeybindings.prevPage)) {
       e.preventDefault();
       goToPage(currentPageIndex - 1); // 右矢印で前のページへ（縦書きでは右が戻る方向）
     }
@@ -1636,36 +1682,40 @@ export default function TategakiEditor() {
         </div>
 
         <div className={actionWrapperClass}>
-          {/* ページナビゲーション */}
-          <button
-            onClick={() => goToPage(currentPageIndex + 1)}
-            disabled={currentPageIndex === pages.length - 1}
-            className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
-            title="次のページ（左へ）"
-          >
-            ◀
-          </button>
-          <input
-            type="number"
-            min="1"
-            max={pages.length}
-            value={currentPageIndex + 1}
-            onChange={(e) => goToPage(Number(e.target.value) - 1)}
-            className="w-8 h-6 px-1 text-xs text-center border border-gray-300 rounded text-black"
-          />
-          <span className="text-xs text-gray-500">/{pages.length}</span>
+          {/* ページナビゲーション (paged mode only) */}
+          {editorMode === 'paged' && (
+            <>
+              <button
+                onClick={() => goToPage(currentPageIndex + 1)}
+                disabled={currentPageIndex === pages.length - 1}
+                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                title="次のページ（左へ）"
+              >
+                ◀
+              </button>
+              <input
+                type="number"
+                min="1"
+                max={pages.length}
+                value={currentPageIndex + 1}
+                onChange={(e) => goToPage(Number(e.target.value) - 1)}
+                className="w-8 h-6 px-1 text-xs text-center border border-gray-300 rounded text-black"
+              />
+              <span className="text-xs text-gray-500">/{pages.length}</span>
 
-          <button
-            onClick={() => goToPage(currentPageIndex - 1)}
-            disabled={currentPageIndex === 0}
-            className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
-            title="前のページ（右へ）"
-          >
-            ▶
-          </button>
+              <button
+                onClick={() => goToPage(currentPageIndex - 1)}
+                disabled={currentPageIndex === 0}
+                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                title="前のページ（右へ）"
+              >
+                ▶
+              </button>
 
-          {/* 機能ボタン */}
-          <div className="w-px h-4 bg-gray-300 mx-1"></div>
+              {/* 機能ボタン */}
+              <div className="w-px h-4 bg-gray-300 mx-1"></div>
+            </>
+          )}
 
           <input
             ref={fileInputRef}
@@ -2526,21 +2576,25 @@ export default function TategakiEditor() {
                 <div className="font-semibold text-gray-700">キー</div>
                 <div className="font-semibold text-gray-700">機能</div>
                 </div>
-              
-              <div className="grid grid-cols-2 gap-2 py-1 border-t border-gray-200">
-                <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Ctrl + Enter</kbd>
-                <span>新しいページを作成</span>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-2 py-1">
+
+              {editorMode === 'paged' && (
+                <div className="grid grid-cols-2 gap-2 py-1 border-t border-gray-200">
+                  <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Ctrl + Enter</kbd>
+                  <span>新しいページを作成</span>
+                </div>
+              )}
+
+              <div className={`grid grid-cols-2 gap-2 py-1${editorMode !== 'paged' ? ' border-t border-gray-200' : ''}`}>
                 <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Cmd + K</kbd>
                 <span>AI文章生成</span>
               </div>
-              
-              <div className="grid grid-cols-2 gap-2 py-1">
-                <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Shift + ← / →</kbd>
-                <span>ページ移動（←次 →前）</span>
-                          </div>
+
+              {editorMode === 'paged' && (
+                <div className="grid grid-cols-2 gap-2 py-1">
+                  <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Shift + ← / →</kbd>
+                  <span>ページ移動（←次 →前）</span>
+                </div>
+              )}
                           
               <div className="grid grid-cols-2 gap-2 py-1">
                 <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">縦/横ボタン</kbd>
