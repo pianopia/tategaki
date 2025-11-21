@@ -7,6 +7,7 @@ import { FiEye, FiSettings, FiTrash, FiTrash2 } from 'react-icons/fi';
 import ContinuousScrollEditor from '@/components/ContinuousScrollEditor';
 import { PreferencesDialog } from '@/components/PreferencesDialog';
 import { TableOfContents, Heading } from '@/components/TableOfContents';
+import { GoToLineDialog } from '@/components/GoToLineDialog';
 
 type Page = {
   id: string;
@@ -202,8 +203,10 @@ export default function TategakiEditor() {
   const [isMobileView, setIsMobileView] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [showPreferencesDialog, setShowPreferencesDialog] = useState(false);
+  const [showGoToLineDialog, setShowGoToLineDialog] = useState(false);
   const [showTOC, setShowTOC] = useState(false);
   const [tocHeadings, setTocHeadings] = useState<Heading[]>([]);
+  const pendingLineJumpRef = useRef<number | null>(null);
   const [editorTheme, setEditorTheme] = useState<'light' | 'dark' | 'custom'>('light');
   const [editorBackgroundColor, setEditorBackgroundColor] = useState('#FFFFFF');
   const [editorTextColor, setEditorTextColor] = useState('#000000');
@@ -779,8 +782,8 @@ export default function TategakiEditor() {
       document.execCommand('insertParagraph');
     } else if (matchesKeybinding(e, activeKeybindings.lineJump)) {
       e.preventDefault();
-      // Line Jump behavior: insert line break (Shift+Enter equivalent)
-      document.execCommand('insertLineBreak');
+      // Line Jump behavior: Open Go To Line dialog
+      setShowGoToLineDialog(true);
     } else if (matchesKeybinding(e, activeKeybindings.moveUp)) {
       e.preventDefault();
       const selection = window.getSelection();
@@ -1646,6 +1649,37 @@ export default function TategakiEditor() {
     setCharCount(computeTotalChars(pages));
   }, [pages]);
 
+  useEffect(() => {
+    if (pendingLineJumpRef.current !== null && editorRef.current) {
+      const linesToMove = pendingLineJumpRef.current;
+      pendingLineJumpRef.current = null;
+
+      // Wait for content to render
+      setTimeout(() => {
+        if (!editorRef.current) return;
+
+        editorRef.current.focus();
+
+        // Reset cursor to start
+        const selection = window.getSelection();
+        if (selection) {
+          const range = document.createRange();
+          range.selectNodeContents(editorRef.current);
+          range.collapse(true); // Start of content
+          selection.removeAllRanges();
+          selection.addRange(range);
+
+          // Move down line by line
+          // Note: 'forward' in vertical-rl means left (next line)
+          // 'line' granularity works for visual lines
+          for (let i = 0; i < linesToMove; i++) {
+            selection.modify('move', 'forward', 'line');
+          }
+        }
+      }, 100);
+    }
+  }, [currentPageIndex, pages]); // Run when page changes
+
   // Update editor styles when theme changes
   useEffect(() => {
     if (editorRef.current) {
@@ -2385,6 +2419,85 @@ export default function TategakiEditor() {
             />
           </>
         )}
+
+        {/* Go To Line Dialog */}
+        <GoToLineDialog
+          isOpen={showGoToLineDialog}
+          onClose={() => setShowGoToLineDialog(false)}
+          onGoToLine={(line) => {
+            console.log('onGoToLine called with:', line, 'maxLinesPerPage:', maxLinesPerPage, 'mode:', editorMode);
+            if (editorMode === 'paged') {
+              // Calculate which page contains the line
+              const pageIndex = Math.floor((line - 1) / maxLinesPerPage);
+              console.log('Calculated pageIndex:', pageIndex, 'totalPages:', pages.length);
+
+              if (pageIndex >= 0 && pageIndex < pages.length) {
+                console.log('Jumping to page:', pageIndex);
+
+                // Calculate line offset within the page
+                const lineOffset = (line - 1) % maxLinesPerPage;
+                pendingLineJumpRef.current = lineOffset;
+
+                goToPage(pageIndex);
+              } else if (pageIndex >= pages.length) {
+                console.log('Target beyond pages, going to last:', pages.length - 1);
+                // If target is beyond current pages, go to last page
+                goToPage(pages.length - 1);
+              }
+            } else {
+              // Continuous mode
+              const editor = continuousEditorRef.current;
+              if (editor) {
+                // Capture current scroll position of the main container or body
+                // Since main has overflow-hidden, the scroll might be on the editor itself or a wrapper?
+                // ContinuousScrollEditor has min-h-[70vh].
+                // Let's try to find the scrollable container.
+                // Usually it's the window or document.scrollingElement for the main page scroll.
+                const scrollContainer = document.scrollingElement || document.documentElement;
+                const startScrollTop = scrollContainer.scrollTop;
+
+                editor.focus({ preventScroll: true });
+
+                // Reset cursor to start
+                const selection = window.getSelection();
+                if (selection) {
+                  const range = document.createRange();
+                  range.selectNodeContents(editor);
+                  range.collapse(true); // Start of content
+                  selection.removeAllRanges();
+                  selection.addRange(range);
+
+                  // Move down line by line
+                  for (let i = 0; i < line - 1; i++) {
+                    selection.modify('move', 'forward', 'line');
+                  }
+
+                  // Ensure the new position is visible
+                  const anchorNode = selection.anchorNode;
+                  if (anchorNode) {
+                    const element = anchorNode.nodeType === Node.ELEMENT_NODE
+                      ? anchorNode as Element
+                      : anchorNode.parentElement;
+
+                    if (element) {
+                      // Use scrollIntoView with block: 'nearest'
+                      element.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'center' });
+
+                      // Force restore vertical scroll position immediately
+                      // This prevents any vertical shift that scrollIntoView might have caused
+                      scrollContainer.scrollTop = startScrollTop;
+
+                      // Also check if body or main is scrolling
+                      document.body.scrollTop = startScrollTop;
+                    }
+                  }
+                }
+              }
+            }
+          }}
+          currentLine={editorMode === 'paged' ? (currentPageIndex * maxLinesPerPage) + 1 : 1}
+          maxLines={editorMode === 'paged' ? pages.length * maxLinesPerPage : 9999}
+        />
 
         {/* 極小ステータスバー */}
         {!isMobileView && (
