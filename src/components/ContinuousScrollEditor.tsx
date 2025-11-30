@@ -104,11 +104,10 @@ const ContinuousScrollEditor = React.forwardRef<HTMLDivElement, ContinuousScroll
               color: textColor,
               caretColor: textColor,
               minWidth: isVertical ? '200vw' : '100vw',
-              // Fix wrapping: Constrain height to viewport height minus header/margin
-              height: isVertical ? 'calc(100vh - 140px)' : 'auto',
+              minHeight: isVertical ? '100vh' : 'auto',
               backgroundColor: backgroundColor,
               // 縦書き: 右側に余裕を持たせる / 横書き: 左側に余裕を持たせる
-              padding: isVertical ? '32px 32px 32px 32px' : '32px 32px 32px 80px',
+              padding: isVertical ? '32px 80px 32px 32px' : '32px 32px 32px 80px',
             }}
             onInput={handleInput}
             onKeyDown={onKeyDown}

@@ -18,14 +18,6 @@
   }
 }
 
-html,
-body {
-  max-width: 100vw;
-  overflow-x: hidden;
-  scroll-padding-top: 80px;
-  /* Prevent header overlap during scrollIntoView */
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
