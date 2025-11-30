@@ -23,8 +23,16 @@ interface PreferencesDialogProps {
 const DEFAULT_KEYBINDINGS: Record<string, { action: string; key: string }> = {
   addPage: { action: 'Add new page', key: 'Ctrl+Enter' },
   aiPrompt: { action: 'Open AI prompt', key: 'Cmd+K' },
+  jumpToLine: { action: 'Jump to line', key: 'Ctrl+G' },
   nextPage: { action: 'Go to next page', key: 'Shift+Left' },
   prevPage: { action: 'Go to previous page', key: 'Shift+Right' },
+  delete: { action: 'Delete (Del)', key: '' },
+  backspace: { action: 'Backspace (BS)', key: '' },
+  enter: { action: 'Enter', key: '' },
+  moveUp: { action: 'Move up (Up arrow)', key: '' },
+  moveDown: { action: 'Move down (Down arrow)', key: '' },
+  moveLeft: { action: 'Move left (Left arrow)', key: '' },
+  moveRight: { action: 'Move right (Right arrow)', key: '' },
 };
 
 export function PreferencesDialog({

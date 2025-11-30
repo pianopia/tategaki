@@ -812,6 +812,13 @@ export default function TategakiEditor() {
     jumpToLine: 'Ctrl+G',
     nextPage: 'Shift+ArrowLeft',
     prevPage: 'Shift+ArrowRight',
+    delete: '',
+    backspace: '',
+    enter: '',
+    moveUp: '',
+    moveDown: '',
+    moveLeft: '',
+    moveRight: '',
   };
 
   // Helper function to check if pressed key matches a keybinding
@@ -853,6 +860,13 @@ export default function TategakiEditor() {
       jumpToLine: editorKeybindings.jumpToLine || DEFAULT_KEYBINDINGS.jumpToLine,
       nextPage: editorKeybindings.nextPage || DEFAULT_KEYBINDINGS.nextPage,
       prevPage: editorKeybindings.prevPage || DEFAULT_KEYBINDINGS.prevPage,
+      delete: editorKeybindings.delete || DEFAULT_KEYBINDINGS.delete,
+      backspace: editorKeybindings.backspace || DEFAULT_KEYBINDINGS.backspace,
+      enter: editorKeybindings.enter || DEFAULT_KEYBINDINGS.enter,
+      moveUp: editorKeybindings.moveUp || DEFAULT_KEYBINDINGS.moveUp,
+      moveDown: editorKeybindings.moveDown || DEFAULT_KEYBINDINGS.moveDown,
+      moveLeft: editorKeybindings.moveLeft || DEFAULT_KEYBINDINGS.moveLeft,
+      moveRight: editorKeybindings.moveRight || DEFAULT_KEYBINDINGS.moveRight,
     };
 
     if (editorMode === 'paged' && matchesKeybinding(e, activeKeybindings.addPage)) {
@@ -870,6 +884,31 @@ export default function TategakiEditor() {
     } else if (editorMode === 'paged' && matchesKeybinding(e, activeKeybindings.prevPage)) {
       e.preventDefault();
       goToPage(currentPageIndex - 1); // 右矢印で前のページへ（縦書きでは右が戻る方向）
+    } else if (matchesKeybinding(e, activeKeybindings.delete)) {
+      e.preventDefault();
+      document.execCommand('forwardDelete');
+    } else if (matchesKeybinding(e, activeKeybindings.backspace)) {
+      e.preventDefault();
+      document.execCommand('delete');
+    } else if (matchesKeybinding(e, activeKeybindings.enter)) {
+      e.preventDefault();
+      document.execCommand('insertParagraph');
+    } else if (matchesKeybinding(e, activeKeybindings.moveUp)) {
+      e.preventDefault();
+      const selection = window.getSelection();
+      if (selection) selection.modify('move', 'backward', 'line');
+    } else if (matchesKeybinding(e, activeKeybindings.moveDown)) {
+      e.preventDefault();
+      const selection = window.getSelection();
+      if (selection) selection.modify('move', 'forward', 'line');
+    } else if (matchesKeybinding(e, activeKeybindings.moveLeft)) {
+      e.preventDefault();
+      const selection = window.getSelection();
+      if (selection) selection.modify('move', 'backward', 'character');
+    } else if (matchesKeybinding(e, activeKeybindings.moveRight)) {
+      e.preventDefault();
+      const selection = window.getSelection();
+      if (selection) selection.modify('move', 'forward', 'character');
     }
   };
 
