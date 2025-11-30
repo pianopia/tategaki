@@ -25,15 +25,6 @@ const DEFAULT_KEYBINDINGS: Record<string, { action: string; key: string }> = {
   aiPrompt: { action: 'Open AI prompt', key: 'Cmd+K' },
   nextPage: { action: 'Go to next page', key: 'Shift+Left' },
   prevPage: { action: 'Go to previous page', key: 'Shift+Right' },
-  // New keybindings
-  delete: { action: 'Delete (DEL)', key: '' },
-  backspace: { action: 'Backspace (BS)', key: '' },
-  enter: { action: 'Enter', key: '' },
-  lineJump: { action: 'Line Jump (Shift+Enter)', key: '' },
-  moveUp: { action: 'Move Up (↑)', key: '' },
-  moveDown: { action: 'Move Down (↓)', key: '' },
-  moveLeft: { action: 'Move Left (←)', key: '' },
-  moveRight: { action: 'Move Right (→)', key: '' },
 };
 
 export function PreferencesDialog({
