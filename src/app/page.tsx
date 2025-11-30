@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FiEye, FiSettings, FiTrash, FiTrash2 } from 'react-icons/fi';
 
 import ContinuousScrollEditor from '@/components/ContinuousScrollEditor';
+import { JumpToLineDialog } from '@/components/JumpToLineDialog';
 import { PreferencesDialog } from '@/components/PreferencesDialog';
 
 type Page = {
@@ -205,6 +206,7 @@ export default function TategakiEditor() {
   const [editorBackgroundColor, setEditorBackgroundColor] = useState('#FFFFFF');
   const [editorTextColor, setEditorTextColor] = useState('#000000');
   const [editorKeybindings, setEditorKeybindings] = useState<Record<string, string>>({});
+  const [showJumpDialog, setShowJumpDialog] = useState(false);
   const activeCloudDocument = useMemo(() => {
     if (!activeDocumentId) return null;
     return cloudDocuments.find(doc => doc.id === activeDocumentId) ?? null;
@@ -226,10 +228,10 @@ export default function TategakiEditor() {
   // カーソル位置を保存・復元する関数
   const saveCursorPosition = () => {
     if (!editorRef.current) return null;
-    
+
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) return null;
-    
+
     const range = selection.getRangeAt(0);
     return {
       startOffset: range.startOffset,
@@ -241,15 +243,15 @@ export default function TategakiEditor() {
 
   const restoreCursorPosition = (position: any) => {
     if (!position || !editorRef.current) return;
-    
+
     try {
       const selection = window.getSelection();
       if (!selection) return;
-      
+
       const range = document.createRange();
       range.setStart(position.startContainer, position.startOffset);
       range.setEnd(position.endContainer, position.endOffset);
-      
+
       selection.removeAllRanges();
       selection.addRange(range);
     } catch (error) {
@@ -260,14 +262,14 @@ export default function TategakiEditor() {
 
   const moveCursorToEnd = () => {
     if (!editorRef.current) return;
-    
+
     const selection = window.getSelection();
     if (!selection) return;
-    
+
     const range = document.createRange();
     range.selectNodeContents(editorRef.current);
     range.collapse(false); // 末尾に移動
-    
+
     selection.removeAllRanges();
     selection.addRange(range);
   };
@@ -354,6 +356,188 @@ export default function TategakiEditor() {
       return Math.max(1, lines.length);
     }
   };
+
+  // 指定行へジャンプする関数
+  const handleJumpToLine = (targetLine: number) => {
+    // 1-based index to 0-based calculation
+    if (targetLine < 1) targetLine = 1;
+
+    // ページモードの場合
+    if (editorMode === 'paged') {
+      if (!editorRef.current) return;
+      const element = editorRef.current;
+
+      // 現在のページ内での行位置を特定してカーソル移動
+      // 簡易実装: 行数推定ロジックを再利用して、該当行の先頭ノードを探す
+
+      // まずは単純に、行数オーバーしていたらページ送り...はせず、
+      // 現在のページ内で完結する範囲で移動を試みる
+
+      const positions: { pos: number; node: Node; offset: number }[] = [];
+      const tolerance = 1.5;
+
+      const addPosition = (value: number, node: Node, offset: number) => {
+        const rounded = Math.round(value * 10) / 10;
+        // 同じ行（位置）なら追加しない（最初の要素を優先）
+        const exists = positions.some((p) => Math.abs(p.pos - rounded) < tolerance);
+        if (!exists) {
+          positions.push({ pos: rounded, node, offset });
+        }
+      };
+
+      const collectRectsFromRange = (range: Range, node: Node, offset: number) => {
+        const rectList = range.getClientRects();
+        for (let i = 0; i < rectList.length; i++) {
+          const rect = rectList.item(i);
+          if (!rect) continue;
+          if (rect.width <= 0.2 || rect.height <= 0.2) continue;
+          const position = isVertical ? rect.left : rect.top;
+          addPosition(position, node, offset);
+        }
+      };
+
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let currentNode: Node | null;
+
+      while ((currentNode = walker.nextNode())) {
+        const content = currentNode.textContent;
+        if (!content || !content.trim()) continue;
+
+        // 文字ごとに位置を確認するのは重いので、ある程度まとめて...
+        // 正確性を期すなら1文字ずつだが、ここではノード単位で簡易チェック
+        // 行ジャンプの精度を上げるため、テキストノード内の改行も考慮
+
+        const textRange = document.createRange();
+        textRange.selectNodeContents(currentNode);
+        collectRectsFromRange(textRange, currentNode, 0);
+      }
+
+      // 位置でソート
+      positions.sort((a, b) => (isVertical ? b.pos - a.pos : a.pos - b.pos));
+
+      const targetIndex = Math.min(targetLine - 1, positions.length - 1);
+      const target = positions[targetIndex];
+
+      if (target) {
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.setStart(target.node, target.offset);
+        range.collapse(true);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+
+        // 該当要素が見えるようにスクロール（ページモードなら通常不要だが念のため）
+        if (target.node.parentElement) {
+          target.node.parentElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }
+
+    } else {
+      // 連続スクロールモードの場合
+      // ContinuousScrollEditor側で制御するのが理想だが、
+      // ここでは簡易的に、行の高さ/幅を推定してスクロール位置を決定する
+
+      // Note: ContinuousScrollEditorはiframeではなくdivで実装されているため、
+      // DOMに直接アクセス可能であればそこから計算できる。
+      // ただし、ContinuousScrollEditorコンポーネント内のDOM構造に依存する。
+
+      // ContinuousScrollEditorの実装を見ると、editorRefは内部にあるため、
+      // 親から直接アクセスするのは難しい。
+      // したがって、ContinuousScrollEditorにrefを渡すか、
+      // DOMクエリで要素を探す必要がある。
+
+      const scrollEditor = document.querySelector('.overflow-x-auto .min-h-\\[70vh\\]');
+      if (!scrollEditor) return;
+
+      // 行位置を特定するためのロジック（Pageモードと同様）
+      const positions: number[] = [];
+      const tolerance = 5; // 許容誤差を少し広めに
+
+      // テキストノードを走査して行位置を収集
+      const walker = document.createTreeWalker(scrollEditor, NodeFilter.SHOW_TEXT);
+      let currentNode: Node | null;
+      const nodeMap = new Map<number, { node: Node; offset: number }>();
+
+      while ((currentNode = walker.nextNode())) {
+        const range = document.createRange();
+        range.selectNodeContents(currentNode);
+        const rects = range.getClientRects();
+
+        for (let i = 0; i < rects.length; i++) {
+          const rect = rects[i];
+          const pos = isVertical ? rect.left : rect.top;
+          const rounded = Math.round(pos);
+
+          // 既存の行位置に近いかチェック
+          const existingPos = positions.find(p => Math.abs(p - rounded) < tolerance);
+
+          if (existingPos === undefined) {
+            positions.push(rounded);
+            nodeMap.set(rounded, { node: currentNode, offset: 0 });
+          }
+        }
+      }
+
+      // ソート
+      positions.sort((a, b) => (isVertical ? b - a : a - b));
+
+      // ターゲット行の座標を取得
+      const targetPos = positions[Math.min(targetLine - 1, positions.length - 1)];
+
+      if (targetPos !== undefined) {
+        const targetNodeInfo = nodeMap.get(targetPos);
+
+        // スクロールコンテナを取得
+        const container = scrollEditor.parentElement?.parentElement;
+        if (container) {
+          if (isVertical) {
+            // 縦書きの場合、右から左へスクロール。
+            // scrollLeftは通常左端が0。
+            // コンテナの幅 - ターゲット位置 + パディング調整
+            // ただし、RTL的な挙動を考慮する必要がある。
+
+            // scrollIntoViewを使うのが一番確実
+            if (targetNodeInfo?.node.parentElement) {
+              // テキストノード自体はElementではないのでparentElementを使うか、Rangeを使う
+              const range = document.createRange();
+              range.setStart(targetNodeInfo.node, targetNodeInfo.offset);
+              const rect = range.getBoundingClientRect();
+
+              // コンテナの相対位置を計算してスクロール
+              // 簡易的にscrollIntoViewを使用
+              const span = document.createElement('span');
+              range.insertNode(span);
+              span.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+              span.parentNode?.removeChild(span);
+            }
+          } else {
+            // 横書き
+            if (targetNodeInfo?.node.parentElement) {
+              const range = document.createRange();
+              range.setStart(targetNodeInfo.node, targetNodeInfo.offset);
+              const span = document.createElement('span');
+              range.insertNode(span);
+              span.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+              span.parentNode?.removeChild(span);
+            }
+          }
+        }
+
+        // カーソル移動
+        if (targetNodeInfo) {
+          const selection = window.getSelection();
+          const range = document.createRange();
+          range.setStart(targetNodeInfo.node, targetNodeInfo.offset);
+          range.collapse(true);
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+          // フォーカスを戻す
+          (scrollEditor as HTMLElement).focus();
+        }
+      }
+    }
+  };
+
 
   // 自動ページ送り処理（画面上の実際の行数に合わせて動作）
   const handleAutoPageBreak = () => {
@@ -502,25 +686,25 @@ export default function TategakiEditor() {
         );
         setPages(updatedPages);
       }
-      
+
       // 純粋な文字数をカウント（改行文字は除く）
       const totalChars = (updatedPages || []).reduce(
         (sum, page) => sum + htmlContentToPlainText(page.content || '').length,
         0
       );
       setCharCount(totalChars);
-      
+
       if (editorMode === 'paged') {
         // 実際の行数を計算
         const actualLines = calculateActualContentLines();
         setLineCount(actualLines);
-        
+
         if (suppressAutoSaveRef.current) {
           suppressAutoSaveRef.current = false;
         } else if (isAutoSaveEnabled && user) {
           setAutoSaveSignal((signal) => signal + 1);
         }
-        
+
         const shouldPullFromNext =
           actualLines < maxLinesPerPage && Boolean(pages[currentPageIndex + 1]?.content?.trim());
 
@@ -539,6 +723,16 @@ export default function TategakiEditor() {
 
   // ペースト時の処理
   const handlePaste = (e: React.ClipboardEvent) => {
+    // デフォルトのペースト処理（スタイル付き）をキャンセル
+    e.preventDefault();
+
+    // プレーンテキストのみを取得
+    const text = e.clipboardData.getData('text/plain');
+
+    // カーソル位置にプレーンテキストを挿入
+    // execCommand('insertText') はUndo履歴も保持されるため推奨される方法
+    document.execCommand('insertText', false, text);
+
     // デフォルトの貼り付け処理の後に改ページチェックを実行
     setTimeout(() => {
       console.log('Paste event - checking for page break');
@@ -566,7 +760,7 @@ export default function TategakiEditor() {
 
     setIsGenerating(true);
     setShowPromptDialog(false);
-    
+
     try {
       // 現在のテキストを取得して文脈として使用
       const currentText = editorRef.current.innerText || '';
@@ -575,7 +769,7 @@ export default function TategakiEditor() {
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           userPrompt: promptText,
           context: context,
           model: aiModel,
@@ -588,7 +782,7 @@ export default function TategakiEditor() {
       if (!response.ok) {
         throw new Error(data.error || 'AI生成に失敗しました');
       }
-      
+
       // カーソル位置に生成されたテキストを挿入
       const selection = window.getSelection();
       if (selection && selection.rangeCount > 0) {
@@ -615,6 +809,7 @@ export default function TategakiEditor() {
   const DEFAULT_KEYBINDINGS: Record<string, string> = {
     addPage: 'Ctrl+Enter',
     aiPrompt: 'Cmd+K',
+    jumpToLine: 'Ctrl+G',
     nextPage: 'Shift+ArrowLeft',
     prevPage: 'Shift+ArrowRight',
   };
@@ -632,8 +827,8 @@ export default function TategakiEditor() {
 
     // Check main key
     const mainKeyMatches = eventKey === mainKey ||
-                          (mainKey === 'ArrowLeft' && eventKey === 'ArrowLeft') ||
-                          (mainKey === 'ArrowRight' && eventKey === 'ArrowRight');
+      (mainKey === 'ArrowLeft' && eventKey === 'ArrowLeft') ||
+      (mainKey === 'ArrowRight' && eventKey === 'ArrowRight');
 
     if (!mainKeyMatches) return false;
 
@@ -644,9 +839,9 @@ export default function TategakiEditor() {
     const hasShift = parts.includes('Shift');
 
     return e.ctrlKey === hasCtrl &&
-           e.metaKey === hasCmd &&
-           e.altKey === hasAlt &&
-           e.shiftKey === hasShift;
+      e.metaKey === hasCmd &&
+      e.altKey === hasAlt &&
+      e.shiftKey === hasShift;
   };
 
   // キーボードショートカット
@@ -655,6 +850,7 @@ export default function TategakiEditor() {
     const activeKeybindings = {
       addPage: editorKeybindings.addPage || DEFAULT_KEYBINDINGS.addPage,
       aiPrompt: editorKeybindings.aiPrompt || DEFAULT_KEYBINDINGS.aiPrompt,
+      jumpToLine: editorKeybindings.jumpToLine || DEFAULT_KEYBINDINGS.jumpToLine,
       nextPage: editorKeybindings.nextPage || DEFAULT_KEYBINDINGS.nextPage,
       prevPage: editorKeybindings.prevPage || DEFAULT_KEYBINDINGS.prevPage,
     };
@@ -665,6 +861,9 @@ export default function TategakiEditor() {
     } else if (matchesKeybinding(e, activeKeybindings.aiPrompt)) {
       e.preventDefault();
       openPromptDialog();
+    } else if (matchesKeybinding(e, activeKeybindings.jumpToLine)) {
+      e.preventDefault();
+      setShowJumpDialog(true);
     } else if (editorMode === 'paged' && matchesKeybinding(e, activeKeybindings.nextPage)) {
       e.preventDefault();
       goToPage(currentPageIndex + 1); // 左矢印で次のページへ（縦書きでは左が進む方向）
@@ -772,7 +971,7 @@ export default function TategakiEditor() {
         const content = (e.target?.result as string) || '';
         // 事前に改行コードをLFへ正規化
         const normalized = content.replace(/\r\n?/g, '\n');
-        
+
         // ページ区切り検出（明示的なセパレータ優先）
         const SENTINEL_TEXT = '=== tategaki:page-break ===';
         const lines = normalized.split('\n');
@@ -813,7 +1012,7 @@ export default function TategakiEditor() {
         }
 
         // console.debug('Imported pages:', pageContents.length);
-        
+
         console.log('tategaki import: split into pages =', pageContents.length);
         // 改行をHTMLに変換（先頭末尾の空行も保持）
         const newPages = pageContents.map((pageContent, index) => ({
@@ -821,12 +1020,12 @@ export default function TategakiEditor() {
           content: (pageContent || '')
             .replace(/\n/g, '<br>')
         }));
-        
+
         // 最低1ページは必要
         if (newPages.length === 0) {
           newPages.push({ id: '1', content: '' });
         }
-        
+
         suppressAutoSaveRef.current = true;
         setPages(newPages);
         setCurrentPageIndex(0);
@@ -838,7 +1037,7 @@ export default function TategakiEditor() {
           const nameWithoutExt = file.name.replace(/\.[^.]+$/, '');
           setDocumentTitle(nameWithoutExt || DEFAULT_DOCUMENT_TITLE);
         }
-        
+
         // インポート後にフォーカスのみ設定（古いクロージャで状態を上書きしないため）
         setTimeout(() => {
           if (editorRef.current) {
@@ -902,9 +1101,9 @@ export default function TategakiEditor() {
       const nextPages =
         segments.length > 0
           ? segments.map((content, index) => ({
-              id: pages[index]?.id ?? generatePageId(),
-              content,
-            }))
+            id: pages[index]?.id ?? generatePageId(),
+            content,
+          }))
           : [{ id: generatePageId(), content: '' }];
       setPages(nextPages);
       setCurrentPageIndex(0);
@@ -967,15 +1166,15 @@ export default function TategakiEditor() {
 
         const timeline: RevisionEntry[] = Array.isArray(data.revisions)
           ? data.revisions.map((rev: any) => ({
-              id:
-                typeof rev.id === 'string' && rev.id.length > 0
-                  ? rev.id
-                  : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-              title: typeof rev.title === 'string' && rev.title.length > 0 ? rev.title : DEFAULT_DOCUMENT_TITLE,
-              createdAt: typeof rev.createdAt === 'number' ? rev.createdAt : Date.now(),
-              content: typeof rev.content === 'string' ? rev.content : '',
-              pages: normalizePagesPayload(rev.pages, typeof rev.content === 'string' ? rev.content : ''),
-            }))
+            id:
+              typeof rev.id === 'string' && rev.id.length > 0
+                ? rev.id
+                : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            title: typeof rev.title === 'string' && rev.title.length > 0 ? rev.title : DEFAULT_DOCUMENT_TITLE,
+            createdAt: typeof rev.createdAt === 'number' ? rev.createdAt : Date.now(),
+            content: typeof rev.content === 'string' ? rev.content : '',
+            pages: normalizePagesPayload(rev.pages, typeof rev.content === 'string' ? rev.content : ''),
+          }))
           : [];
 
         timeline.sort((a, b) => a.createdAt - b.createdAt);
@@ -1844,18 +2043,16 @@ export default function TategakiEditor() {
             <button
               type="button"
               onClick={() => handleEditorModeChange('paged')}
-              className={`px-2 py-1 ${
-                editorMode === 'paged' ? 'bg-gray-800 text-white' : 'text-gray-600 bg-white'
-              }`}
+              className={`px-2 py-1 ${editorMode === 'paged' ? 'bg-gray-800 text-white' : 'text-gray-600 bg-white'
+                }`}
             >
               ページ
             </button>
             <button
               type="button"
               onClick={() => handleEditorModeChange('continuous')}
-              className={`px-2 py-1 ${
-                editorMode === 'continuous' ? 'bg-gray-800 text-white' : 'text-gray-600 bg-white'
-              }`}
+              className={`px-2 py-1 ${editorMode === 'continuous' ? 'bg-gray-800 text-white' : 'text-gray-600 bg-white'
+                }`}
             >
               横スクロール
             </button>
@@ -1863,9 +2060,8 @@ export default function TategakiEditor() {
 
           <div className="w-px h-4 bg-gray-300 mx-1"></div>
           <label
-            className={`flex items-center gap-1 border rounded px-2 py-1 text-[10px] ${
-              isAutoSaveEnabled ? 'border-blue-400 text-blue-700' : 'border-gray-300 text-gray-600'
-            }`}
+            className={`flex items-center gap-1 border rounded px-2 py-1 text-[10px] ${isAutoSaveEnabled ? 'border-blue-400 text-blue-700' : 'border-gray-300 text-gray-600'
+              }`}
             title={user ? '一定時間入力が止まると自動保存します' : 'ログインすると自動保存を利用できます'}
           >
             <input
@@ -1879,17 +2075,17 @@ export default function TategakiEditor() {
 
           {user ? (
             <>
-                <button
-                  onClick={handleFileExport}
-                  className="h-6 px-2 border border-gray-400 text-gray-700 rounded text-[10px] font-medium hover:bg-gray-100 transition"
-                  title="ローカルにエクスポート"
-                >
-                  エクスポート
-                </button>
-                <button
-                  onClick={saveDocumentToCloud}
-                  className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 disabled:opacity-60"
-                  title="クラウドに保存"
+              <button
+                onClick={handleFileExport}
+                className="h-6 px-2 border border-gray-400 text-gray-700 rounded text-[10px] font-medium hover:bg-gray-100 transition"
+                title="ローカルにエクスポート"
+              >
+                エクスポート
+              </button>
+              <button
+                onClick={saveDocumentToCloud}
+                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 disabled:opacity-60"
+                title="クラウドに保存"
                 disabled={isCloudSaving}
               >
                 {isCloudSaving ? '⏳' : '☁️'}
@@ -1916,9 +2112,8 @@ export default function TategakiEditor() {
                 ログアウト
               </button>
               <span
-                className={`ml-1 text-[10px] text-gray-600 ${
-                  variant === 'desktop' ? 'hidden sm:block' : ''
-                }`}
+                className={`ml-1 text-[10px] text-gray-600 ${variant === 'desktop' ? 'hidden sm:block' : ''
+                  }`}
                 title={user.email}
               >
                 {user.displayName || user.email}
@@ -2003,7 +2198,7 @@ export default function TategakiEditor() {
         </div>
 
         <div className={rowClass}>
-          <span>Ctrl+Enter: 改ページ | Cmd+K: AI生成</span>
+          <span>Ctrl+Enter: 改ページ | Cmd+K: AI生成 | Ctrl+G: 行移動</span>
           {user && (
             <span className="flex items-center gap-1 text-gray-600">
               ☁️ {activeCloudDocument ? activeCloudDocument.title : documentTitle || 'クラウド未保存'}
@@ -2043,9 +2238,8 @@ export default function TategakiEditor() {
                   return (
                     <span
                       key={revision.id}
-                      className={`absolute w-1.5 h-1.5 rounded-full ${
-                        index <= safeRevisionIndex ? 'bg-blue-500' : 'bg-gray-300'
-                      }`}
+                      className={`absolute w-1.5 h-1.5 rounded-full ${index <= safeRevisionIndex ? 'bg-blue-500' : 'bg-gray-300'
+                        }`}
                       style={{ left: `calc(${percent}% - 3px)` }}
                     ></span>
                   );
@@ -2110,7 +2304,7 @@ export default function TategakiEditor() {
         <h2>AI執筆支援について</h2>
         <p>Google Geminiを活用した高品質な文章生成機能により、執筆効率を大幅に向上させます。続きの文章生成、対話シーン作成、情景描写の補強など、創作活動を強力にサポートします。</p>
       </div>
-      
+
       <main
         className="flex-1 flex flex-col overflow-hidden"
         role="application"
@@ -2119,679 +2313,683 @@ export default function TategakiEditor() {
           backgroundColor: editorTheme === 'custom' ? editorBackgroundColor : editorTheme === 'dark' ? '#000000' : '#FFFFFF'
         }}
       >
-      {/* 極小ヘッダー */}
-      {isMobileView ? (
-        <>
-          <div className="bg-gray-100/70 border-b border-gray-200 px-3 py-2 flex-shrink-0 flex items-center justify-between sm:hidden">
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 bg-gray-600 rounded flex items-center justify-center text-white text-sm font-bold">
-                縦
-              </div>
-              <span className="text-sm font-semibold text-gray-800">tategaki</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setIsMobileSidebarOpen(true)}
-              className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg bg-white text-gray-700 shadow-sm"
-            >
-              メニュー
-            </button>
-          </div>
-          {isMobileSidebarOpen && (
-            <div className="fixed inset-0 z-40 sm:hidden">
-              <div
-                className="absolute inset-0 bg-black/40"
-                onClick={() => setIsMobileSidebarOpen(false)}
-                aria-hidden="true"
-              ></div>
-              <div className="absolute inset-y-0 right-0 w-full max-w-xs bg-white shadow-2xl p-4 overflow-y-auto">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-base font-semibold text-gray-800">tategaki メニュー</h3>
-                  <button
-                    type="button"
-                    onClick={() => setIsMobileSidebarOpen(false)}
-                    className="w-8 h-8 border border-gray-300 rounded-full text-gray-600"
-                    aria-label="メニューを閉じる"
-                  >
-                    ✕
-                  </button>
+        {/* 極小ヘッダー */}
+        {isMobileView ? (
+          <>
+            <div className="bg-gray-100/70 border-b border-gray-200 px-3 py-2 flex-shrink-0 flex items-center justify-between sm:hidden">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 bg-gray-600 rounded flex items-center justify-center text-white text-sm font-bold">
+                  縦
                 </div>
-                <div className="space-y-6">
-                  {renderHeaderContent('mobile')}
-                  <div className="border-t border-gray-200 pt-4">
-                    {renderFooterContent('mobile')}
+                <span className="text-sm font-semibold text-gray-800">tategaki</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMobileSidebarOpen(true)}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg bg-white text-gray-700 shadow-sm"
+              >
+                メニュー
+              </button>
+            </div>
+            {isMobileSidebarOpen && (
+              <div className="fixed inset-0 z-40 sm:hidden">
+                <div
+                  className="absolute inset-0 bg-black/40"
+                  onClick={() => setIsMobileSidebarOpen(false)}
+                  aria-hidden="true"
+                ></div>
+                <div className="absolute inset-y-0 right-0 w-full max-w-xs bg-white shadow-2xl p-4 overflow-y-auto">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-base font-semibold text-gray-800">tategaki メニュー</h3>
+                    <button
+                      type="button"
+                      onClick={() => setIsMobileSidebarOpen(false)}
+                      className="w-8 h-8 border border-gray-300 rounded-full text-gray-600"
+                      aria-label="メニューを閉じる"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div className="space-y-6">
+                    {renderHeaderContent('mobile')}
+                    <div className="border-t border-gray-200 pt-4">
+                      {renderFooterContent('mobile')}
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          )}
-        </>
-      ) : (
-        <div
-          className="border-b px-2 py-1 flex-shrink-0"
-          style={{
-            backgroundColor: editorTheme === 'dark' ? '#1a1a1a' : '#f9fafb',
-            borderColor: editorTheme === 'dark' ? '#333' : '#e5e7eb'
-          }}
-        >
-          {renderHeaderContent('desktop')}
-        </div>
-      )}
-
-      {/* エディタエリア（画面の95%） */}
-      <div
-        className="flex-1 overflow-hidden relative"
-        style={{
-          backgroundColor: editorTheme === 'custom' ? editorBackgroundColor : editorTheme === 'dark' ? '#000000' : '#FFFFFF'
-        }}
-      >
-        {editorMode === 'paged' ? (
-          <>
-            {lineCount >= maxLinesPerPage * 0.9 && lineCount < maxLinesPerPage && (
-              <div className="absolute top-2 left-1/2 transform -translate-x-1/2 z-10 bg-orange-100 border border-orange-300 text-orange-800 px-3 py-1 rounded-md text-sm shadow-lg">
-                ⚠️ あと{maxLinesPerPage - lineCount}行でページが自動で切り替わります
-              </div>
             )}
-            <div
-              ref={editorRef}
-              contentEditable
-              role="textbox"
-              aria-label={`${isVertical ? '縦書き' : '横書き'}小説執筆エディタ - ページ ${currentPageIndex + 1}/${pages.length}`}
-              aria-multiline="true"
-              aria-describedby={isMobileView ? undefined : 'editor-stats'}
-              className={`w-full h-full p-8 outline-none resize-none text-lg leading-relaxed editor-focus ${
-                isVertical
-                  ? 'writing-mode-vertical-rl text-orientation-upright'
-                  : 'writing-mode-horizontal-tb'
-              }`}
-              style={{
-                writingMode: isVertical ? 'vertical-rl' : 'horizontal-tb',
-                textOrientation: isVertical ? 'upright' : 'mixed',
-                fontFamily: editorFontFamily,
-                backgroundColor: editorTheme === 'custom' ? editorBackgroundColor : editorTheme === 'dark' ? '#000000' : '#FFFFFF',
-                color: editorTheme === 'custom' ? editorTextColor : editorTheme === 'dark' ? '#FFFFFF' : '#000000',
-                caretColor: editorTheme === 'custom' ? editorTextColor : editorTheme === 'dark' ? '#FFFFFF' : '#000000'
-              }}
-              onInput={handleEditorChange}
-              onPaste={handlePaste}
-              onKeyDown={handleKeyDown}
-              suppressContentEditableWarning={true}
-              data-writing-mode={isVertical ? 'vertical' : 'horizontal'}
-              data-content-type="novel-manuscript"
-            />
           </>
         ) : (
-          <ContinuousScrollEditor
-            value={continuousHtml || joinPagesForContinuous(pages)}
-            isVertical={isVertical}
-            editorFontFamily={editorFontFamily}
-            backgroundColor={editorTheme === 'custom' ? editorBackgroundColor : editorTheme === 'dark' ? '#000000' : '#FFFFFF'}
-            textColor={editorTheme === 'custom' ? editorTextColor : editorTheme === 'dark' ? '#FFFFFF' : '#000000'}
-            onChange={handleContinuousContentChange}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-          />
+          <div
+            className="border-b px-2 py-1 flex-shrink-0"
+            style={{
+              backgroundColor: editorTheme === 'dark' ? '#1a1a1a' : '#f9fafb',
+              borderColor: editorTheme === 'dark' ? '#333' : '#e5e7eb'
+            }}
+          >
+            {renderHeaderContent('desktop')}
+          </div>
         )}
-      </div>
 
-      {/* 極小ステータスバー */}
-      {!isMobileView && (
+        {/* エディタエリア（画面の95%） */}
         <div
-          className="border-t px-3 py-2 flex-shrink-0"
+          className="flex-1 overflow-hidden relative"
           style={{
-            backgroundColor: editorTheme === 'dark' ? '#1a1a1a' : '#f9fafb',
-            borderColor: editorTheme === 'dark' ? '#333' : '#e5e7eb',
-            color: editorTheme === 'dark' ? '#e5e7eb' : '#374151'
+            backgroundColor: editorTheme === 'custom' ? editorBackgroundColor : editorTheme === 'dark' ? '#000000' : '#FFFFFF'
           }}
         >
-          {renderFooterContent('desktop')}
-        </div>
-      )}
-
-      {/* AI生成プロンプトダイアログ */}
-      {showPromptDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-lg w-full mx-4 shadow-2xl">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-gray-800">AI文章生成</h3>
-              <button
-                onClick={() => setShowPromptDialog(false)}
-                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-              >
-                ✕
-              </button>
-            </div>
-            
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  AIへの指示を入力してください
-                </label>
-                <textarea
-                  value={promptText}
-                  onChange={(e) => setPromptText(e.target.value)}
-                  className="w-full h-32 p-3 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 text-black"
-                  style={{ color: '#000000' }}
-                  placeholder="例: 続きを書いて、この場面をより詳しく描写して、対話を追加して、など"
-                  autoFocus
-                />
-              </div>
-              
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <label className="text-sm text-gray-600">モデル:</label>
-                  <select
-                    value={aiModel}
-                    onChange={(e) => setAiModel(e.target.value)}
-                    className="px-2 py-1 text-sm border border-gray-300 rounded text-black"
-                    style={{ color: '#000000' }}
-                  >
-                    <option value="gemini-1.5-flash">Flash (高速)</option>
-                    <option value="gemini-1.5-pro">Pro (高性能)</option>
-                    <option value="gemini-2.0-flash-exp">2.0 Flash (実験版)</option>
-                  </select>
-              </div>
-                
-                <div className="flex space-x-2">
-                  <button
-                    onClick={() => setShowPromptDialog(false)}
-                    className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-100"
-                  >
-                    キャンセル
-                  </button>
-              <button 
-                    onClick={generateAIText}
-                    disabled={!promptText.trim() || isGenerating}
-                    className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isGenerating ? '生成中...' : '生成'}
-              </button>
-          </div>
-              </div>
-            </div>
-            
-            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded text-xs text-black">
-              <strong>ヒント:</strong> 現在書いている文章の最後の500文字が文脈として自動的に送信されます。
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showAuthDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl text-black">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-gray-800">{authTitle}</h3>
-              <button
-                onClick={closeAuthDialog}
-                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-              >
-                ✕
-              </button>
-            </div>
-            <p className="text-sm text-gray-600 mb-4">{authDescription}</p>
-            <form onSubmit={handleAuthSubmit} className="space-y-3">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">メールアドレス</label>
-                <input
-                  type="email"
-                  value={authEmail}
-                  onChange={(e) => setAuthEmail(e.target.value)}
-                  required
-                  className="w-full border border-gray-300 rounded px-3 py-2 text-black"
-                  placeholder="user@example.com"
-                />
-              </div>
-              {isSignupMode && (
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">表示名 (任意)</label>
-                  <input
-                    type="text"
-                    value={authDisplayName}
-                    onChange={(e) => setAuthDisplayName(e.target.value)}
-                    className="w-full border border-gray-300 rounded px-3 py-2 text-black"
-                    placeholder="ペンネーム"
-                  />
+          {editorMode === 'paged' ? (
+            <>
+              {lineCount >= maxLinesPerPage * 0.9 && lineCount < maxLinesPerPage && (
+                <div className="absolute top-2 left-1/2 transform -translate-x-1/2 z-10 bg-orange-100 border border-orange-300 text-orange-800 px-3 py-1 rounded-md text-sm shadow-lg">
+                  ⚠️ あと{maxLinesPerPage - lineCount}行でページが自動で切り替わります
                 </div>
               )}
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">パスワード</label>
-                <input
-                  type="password"
-                  value={authPassword}
-                  onChange={(e) => setAuthPassword(e.target.value)}
-                  required
-                  minLength={8}
-                  className="w-full border border-gray-300 rounded px-3 py-2 text-black"
-                  placeholder="半角英数字8文字以上"
-                />
-                <p className="text-xs text-gray-500 mt-1">8文字以上のパスワードを設定してください。</p>
-              </div>
-              {isSignupMode && (
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">パスワード（確認）</label>
-                  <input
-                    type="password"
-                    value={authPasswordConfirm}
-                    onChange={(e) => setAuthPasswordConfirm(e.target.value)}
-                    required
-                    minLength={8}
-                    className="w-full border border-gray-300 rounded px-3 py-2 text-black"
-                    placeholder="確認のため同じパスワードを入力"
-                  />
-                </div>
-              )}
-              {authError && (
-                <div className="text-xs text-red-600">{authError}</div>
-              )}
-              <div className="text-xs text-gray-500">
-                入力した情報はクラウド同期目的でのみ利用されます。
-              </div>
-              <div className="text-xs text-right">
-                <button
-                  type="button"
-                  onClick={handleAuthModeSwitch}
-                  className="text-blue-600 hover:underline"
-                >
-                  {authToggleLabel}
-                </button>
-              </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={closeAuthDialog}
-                  className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-100"
-                >
-                  キャンセル
-                </button>
-                <button
-                  type="submit"
-                  disabled={
-                    isAuthLoading ||
-                    !authEmail.trim() ||
-                    authPassword.length < 8 ||
-                    (isSignupMode && authPassword !== authPasswordConfirm)
-                  }
-                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-60"
-                >
-                  {isAuthLoading ? '送信中…' : authPrimaryLabel}
-                </button>
-              </div>
-            </form>
-          </div>
+              <div
+                ref={editorRef}
+                contentEditable
+                role="textbox"
+                aria-label={`${isVertical ? '縦書き' : '横書き'}小説執筆エディタ - ページ ${currentPageIndex + 1}/${pages.length}`}
+                aria-multiline="true"
+                aria-describedby={isMobileView ? undefined : 'editor-stats'}
+                className={`w-full h-full p-8 outline-none resize-none text-lg leading-relaxed editor-focus ${isVertical
+                  ? 'writing-mode-vertical-rl text-orientation-upright'
+                  : 'writing-mode-horizontal-tb'
+                  }`}
+                style={{
+                  writingMode: isVertical ? 'vertical-rl' : 'horizontal-tb',
+                  textOrientation: isVertical ? 'upright' : 'mixed',
+                  fontFamily: editorFontFamily,
+                  backgroundColor: editorTheme === 'custom' ? editorBackgroundColor : editorTheme === 'dark' ? '#000000' : '#FFFFFF',
+                  color: editorTheme === 'custom' ? editorTextColor : editorTheme === 'dark' ? '#FFFFFF' : '#000000',
+                  caretColor: editorTheme === 'custom' ? editorTextColor : editorTheme === 'dark' ? '#FFFFFF' : '#000000'
+                }}
+                onInput={handleEditorChange}
+                onPaste={handlePaste}
+                onKeyDown={handleKeyDown}
+                suppressContentEditableWarning={true}
+                data-writing-mode={isVertical ? 'vertical' : 'horizontal'}
+                data-content-type="novel-manuscript"
+              />
+            </>
+          ) : (
+            <ContinuousScrollEditor
+              value={continuousHtml || joinPagesForContinuous(pages)}
+              isVertical={isVertical}
+              editorFontFamily={editorFontFamily}
+              backgroundColor={editorTheme === 'custom' ? editorBackgroundColor : editorTheme === 'dark' ? '#000000' : '#FFFFFF'}
+              textColor={editorTheme === 'custom' ? editorTextColor : editorTheme === 'dark' ? '#FFFFFF' : '#000000'}
+              onChange={handleContinuousContentChange}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+            />
+          )}
         </div>
-      )}
 
-      {showCloudDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-lg w-full mx-4 shadow-2xl text-black">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-gray-800">クラウドに保存したテキスト</h3>
-              <div className="flex items-center gap-2">
+        {/* 極小ステータスバー */}
+        {!isMobileView && (
+          <div
+            className="border-t px-3 py-2 flex-shrink-0"
+            style={{
+              backgroundColor: editorTheme === 'dark' ? '#1a1a1a' : '#f9fafb',
+              borderColor: editorTheme === 'dark' ? '#333' : '#e5e7eb',
+              color: editorTheme === 'dark' ? '#e5e7eb' : '#374151'
+            }}
+          >
+            {renderFooterContent('desktop')}
+          </div>
+        )}
+
+        {/* AI生成プロンプトダイアログ */}
+        {showPromptDialog && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 max-w-lg w-full mx-4 shadow-2xl">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold text-gray-800">AI文章生成</h3>
                 <button
-                  onClick={fetchCloudDocuments}
-                  className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-                  title="再読み込み"
-                >
-                  ↻
-                </button>
-                <button
-                  onClick={closeCloudDialog}
+                  onClick={() => setShowPromptDialog(false)}
                   className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
                 >
                   ✕
                 </button>
               </div>
-            </div>
-            <div className="mb-3">
-              <button
-                onClick={handleCreateNewDocument}
-                className="w-full border border-green-400 text-green-700 rounded-md px-3 py-2 text-sm font-semibold hover:bg-green-50 transition"
-              >
-                ＋ 新しいドキュメントを作成
-              </button>
-            </div>
-            {isCloudLoading ? (
-              <div className="text-sm text-gray-600">読み込み中です…</div>
-            ) : cloudDocuments.length === 0 ? (
-              <div className="text-sm text-gray-600">
-                保存済みのテキストがありません。ヘッダーの☁️ボタンから現在の原稿を保存できます。
-              </div>
-            ) : (
-              <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                {cloudDocuments.map((doc) => (
-                  <div
-                    key={doc.id}
-                    onClick={() => loadDocumentFromCloud(doc.id)}
-                    className={`w-full border rounded px-3 py-2 hover:bg-gray-50 transition cursor-pointer ${
-                      activeDocumentId === doc.id ? 'border-blue-400 bg-blue-50' : 'border-gray-200'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-gray-800 text-sm truncate">
-                          {doc.title || DEFAULT_DOCUMENT_TITLE}
-                        </div>
-                        <div className="text-[11px] text-gray-500">
-                          更新: {new Date(doc.updatedAt).toLocaleString('ja-JP')}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            openDocumentPreview(doc.id);
-                          }}
-                          disabled={isPreviewLoading && previewingDocumentId === doc.id}
-                          className="w-7 h-7 flex items-center justify-center border border-blue-300 text-blue-500 rounded text-xs hover:bg-blue-50 disabled:opacity-60"
-                          aria-label="クラウドドキュメントをプレビュー"
-                        >
-                          {isPreviewLoading && previewingDocumentId === doc.id ? (
-                            <span className="text-[11px]">…</span>
-                          ) : (
-                            <FiEye aria-hidden />
-                          )}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            deleteDocumentFromCloud(doc.id);
-                          }}
-                          disabled={deletingDocumentId === doc.id}
-                          className="w-7 h-7 flex items-center justify-center border border-red-400 text-red-500 rounded text-xs hover:bg-red-50 disabled:opacity-60"
-                          aria-label="クラウドドキュメントを削除"
-                        >
-                          {deletingDocumentId === doc.id ? (
-                            <span className="text-[11px]">…</span>
-                          ) : (
-                            <FiTrash aria-hidden />
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
-      {previewDocument && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 max-w-2xl w-full mx-4 shadow-2xl text-black">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-lg font-bold text-gray-800">プレビュー</h3>
-                <p className="text-xs text-gray-500">
-                  更新: {new Date(previewDocument.updatedAt).toLocaleString('ja-JP')}
-                </p>
-              </div>
-              <button
-                onClick={closePreviewDialog}
-                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-                aria-label="プレビューを閉じる"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="mb-4">
-              <h4 className="text-xl font-semibold text-gray-900 break-words">
-                {previewDocument.title || DEFAULT_DOCUMENT_TITLE}
-              </h4>
-            </div>
-            <div className="border border-gray-200 rounded-lg p-4 max-h-80 overflow-y-auto bg-gray-50 text-sm leading-relaxed whitespace-pre-wrap">
-              {previewDocument.content || '内容が空です。'}
-            </div>
-            <div className="mt-4 flex justify-end">
-              <button
-                onClick={closePreviewDialog}
-                className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
-              >
-                閉じる
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ヘルプダイアログ */}
-      {showHelp && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 text-black">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-gray-800">ショートカットキー</h3>
-              <button
-                onClick={() => setShowHelp(false)}
-                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-              >
-                ✕
-              </button>
-            </div>
-            
-            <div className="space-y-3 text-sm">
-              <div className="grid grid-cols-2 gap-2">
-                <div className="font-semibold text-gray-700">キー</div>
-                <div className="font-semibold text-gray-700">機能</div>
-                </div>
-
-              {editorMode === 'paged' && (
-                <div className="grid grid-cols-2 gap-2 py-1 border-t border-gray-200">
-                  <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Ctrl + Enter</kbd>
-                  <span>新しいページを作成</span>
-                </div>
-              )}
-
-              <div className={`grid grid-cols-2 gap-2 py-1${editorMode !== 'paged' ? ' border-t border-gray-200' : ''}`}>
-                <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Cmd + K</kbd>
-                <span>AI文章生成</span>
-              </div>
-
-              {editorMode === 'paged' && (
-                <div className="grid grid-cols-2 gap-2 py-1">
-                  <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Shift + ← / →</kbd>
-                  <span>ページ移動（←次 →前）</span>
-                </div>
-              )}
-                          
-              <div className="grid grid-cols-2 gap-2 py-1">
-                <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">縦/横ボタン</kbd>
-                <span>書字モード切替</span>
-                            </div>
-                          </div>
-                          
-            <div className="mt-6 p-3 bg-yellow-50 border border-yellow-200 rounded text-xs">
-              <strong>AI生成について:</strong><br/>
-              右上の🔑ボタンからGoogle APIキーを設定してください。
-              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline ml-1">
-                API キーを取得
-              </a>
-              <div className="mt-2 text-gray-600">
-                キーはブラウザのLocal Storageに保存され、次回以降も利用できます。
-              </div>
-            </div>
-                        
-            <div className="mt-4 flex justify-end">
-                          <button
-                onClick={() => setShowHelp(false)}
-                className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
-                          >
-                閉じる
-                          </button>
-                        </div>
-          </div>
-        </div>
-      )}
-
-      {/* サービス紹介ダイアログ */}
-      {showIntroDialog && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm px-4 py-6 sm:p-8">
-          <div className="bg-white rounded-2xl p-6 sm:p-8 max-w-2xl w-full shadow-2xl border border-gray-100 animate-in slide-in-from-bottom-4 duration-500 max-h-[90vh] overflow-y-auto">
-            {/* ヘッダー */}
-            <div className="text-center mb-8">
-              <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
-                <span className="text-white text-2xl font-bold">縦</span>
-              </div>
-              <h2 className="text-3xl font-bold text-gray-800 mb-2">tategaki へようこそ</h2>
-              <p className="text-lg text-gray-600">AI搭載の縦書きエディタ</p>
-            </div>
-
-            {/* 機能紹介 */}
-            <div className="grid md:grid-cols-2 gap-6 mb-6">
-              <div className="flex items-start space-x-3">
-                <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
-                  <span className="text-blue-600 text-lg">✍️</span>
-                </div>
+              <div className="space-y-4">
                 <div>
-                  <h3 className="font-semibold text-gray-800 mb-1">美しい縦書き表示</h3>
-                  <p className="text-sm text-gray-600">日本語文章に最適な縦書きレイアウトで、没入感のある執筆体験を提供</p>
-                </div>
-              </div>
-
-              <div className="flex items-start space-x-3">
-                <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
-                  <span className="text-purple-600 text-lg">🤖</span>
-                </div>
-                <div>
-                  <h3 className="font-semibold text-gray-800 mb-1">AI執筆支援</h3>
-                  <p className="text-sm text-gray-600">Google Gemini搭載で続きの文章生成、対話作成、描写強化をサポート</p>
-                </div>
-              </div>
-            </div>
-
-            {/* アクションボタン */}
-            <div className="flex flex-col sm:flex-row gap-3 mb-4">
-              <button
-                onClick={closeIntroDialog}
-                className="flex-1 bg-gradient-to-r from-blue-500 to-purple-600 text-white px-6 py-3 rounded-xl font-semibold hover:from-blue-600 hover:to-purple-700 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
-              >
-                さっそく執筆を始める
-              </button>
-              <button
-                onClick={() => {
-                  setApiKeyInput(googleApiKey);
-                  setRevealApiKey(false);
-                  setShowApiKeyDialog(true);
-                }}
-                className="flex-1 border border-gray-300 text-gray-800 px-6 py-3 rounded-xl font-semibold hover:bg-gray-50 transition-all duration-200"
-              >
-                🔑 APIキーを設定
-              </button>
-            </div>
-
-            {/* フッター */}
-            <div className="text-center space-y-1">
-              <p className="text-sm text-gray-600 flex flex-col sm:flex-row items-center justify-center gap-2">
-                <span>ログインするとクラウド保存が可能です。</span>
-                <button
-                  type="button"
-                  onClick={() => openAuthDialog('login')}
-                  className="text-blue-600 underline underline-offset-2 hover:text-blue-700"
-                >
-                  ログイン・アカウント作成はこちら
-                </button>
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* APIキー設定ダイアログ */}
-      {showApiKeyDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl text-black">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-gray-800">Google APIキー設定</h3>
-              <button
-                onClick={() => setShowApiKeyDialog(false)}
-                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-                aria-label="閉じる"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="space-y-3">
-              <p className="text-sm text-gray-700">
-                Google Gemini を利用するための API キーを入力してください。
-                <a
-                  href="https://aistudio.google.com/app/apikey"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-600 underline ml-1"
-                >
-                  キーを取得
-                </a>
-              </p>
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">APIキー</label>
-                <div className="flex gap-2">
-                  <input
-                    type={revealApiKey ? 'text' : 'password'}
-                    value={apiKeyInput}
-                    onChange={(e) => setApiKeyInput(e.target.value)}
-                    className="flex-1 p-2 border border-gray-300 rounded text-black"
-                    placeholder="AIza..."
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    AIへの指示を入力してください
+                  </label>
+                  <textarea
+                    value={promptText}
+                    onChange={(e) => setPromptText(e.target.value)}
+                    className="w-full h-32 p-3 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 text-black"
+                    style={{ color: '#000000' }}
+                    placeholder="例: 続きを書いて、この場面をより詳しく描写して、対話を追加して、など"
                     autoFocus
                   />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <label className="text-sm text-gray-600">モデル:</label>
+                    <select
+                      value={aiModel}
+                      onChange={(e) => setAiModel(e.target.value)}
+                      className="px-2 py-1 text-sm border border-gray-300 rounded text-black"
+                      style={{ color: '#000000' }}
+                    >
+                      <option value="gemini-1.5-flash">Flash (高速)</option>
+                      <option value="gemini-1.5-pro">Pro (高性能)</option>
+                      <option value="gemini-2.0-flash-exp">2.0 Flash (実験版)</option>
+                    </select>
+                  </div>
+
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={() => setShowPromptDialog(false)}
+                      className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-100"
+                    >
+                      キャンセル
+                    </button>
+                    <button
+                      onClick={generateAIText}
+                      disabled={!promptText.trim() || isGenerating}
+                      className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isGenerating ? '生成中...' : '生成'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded text-xs text-black">
+                <strong>ヒント:</strong> 現在書いている文章の最後の500文字が文脈として自動的に送信されます。
+              </div>
+            </div>
+          </div>
+        )}
+
+        <JumpToLineDialog
+          isOpen={showJumpDialog}
+          onClose={() => setShowJumpDialog(false)}
+          onJump={handleJumpToLine}
+          maxLines={editorMode === 'paged' ? maxLinesPerPage : undefined}
+        />
+
+        {showAuthDialog && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl text-black">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold text-gray-800">{authTitle}</h3>
+                <button
+                  onClick={closeAuthDialog}
+                  className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+                >
+                  ✕
+                </button>
+              </div>
+              <p className="text-sm text-gray-600 mb-4">{authDescription}</p>
+              <form onSubmit={handleAuthSubmit} className="space-y-3">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">メールアドレス</label>
+                  <input
+                    type="email"
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    required
+                    className="w-full border border-gray-300 rounded px-3 py-2 text-black"
+                    placeholder="user@example.com"
+                  />
+                </div>
+                {isSignupMode && (
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">表示名 (任意)</label>
+                    <input
+                      type="text"
+                      value={authDisplayName}
+                      onChange={(e) => setAuthDisplayName(e.target.value)}
+                      className="w-full border border-gray-300 rounded px-3 py-2 text-black"
+                      placeholder="ペンネーム"
+                    />
+                  </div>
+                )}
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">パスワード</label>
+                  <input
+                    type="password"
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    required
+                    minLength={8}
+                    className="w-full border border-gray-300 rounded px-3 py-2 text-black"
+                    placeholder="半角英数字8文字以上"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">8文字以上のパスワードを設定してください。</p>
+                </div>
+                {isSignupMode && (
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">パスワード（確認）</label>
+                    <input
+                      type="password"
+                      value={authPasswordConfirm}
+                      onChange={(e) => setAuthPasswordConfirm(e.target.value)}
+                      required
+                      minLength={8}
+                      className="w-full border border-gray-300 rounded px-3 py-2 text-black"
+                      placeholder="確認のため同じパスワードを入力"
+                    />
+                  </div>
+                )}
+                {authError && (
+                  <div className="text-xs text-red-600">{authError}</div>
+                )}
+                <div className="text-xs text-gray-500">
+                  入力した情報はクラウド同期目的でのみ利用されます。
+                </div>
+                <div className="text-xs text-right">
                   <button
-                    onClick={() => setRevealApiKey(v => !v)}
-                    className="px-2 border border-gray-300 rounded text-xs text-gray-700 hover:bg-gray-100"
-                    title={revealApiKey ? '非表示' : '表示'}
+                    type="button"
+                    onClick={handleAuthModeSwitch}
+                    className="text-blue-600 hover:underline"
                   >
-                    {revealApiKey ? '🙈' : '👁️'}
+                    {authToggleLabel}
                   </button>
                 </div>
-                {googleApiKey && (
-                  <div className="mt-1 text-xs text-gray-600">現在、保存済みのキーが設定されています。</div>
-                )}
-              </div>
-              <div className="text-xs text-gray-600 bg-blue-50 border border-blue-200 p-2 rounded">
-                キーはこのブラウザの Local Storage にのみ保存され、サーバーには保存されません。
-              </div>
-            </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => setShowApiKeyDialog(false)}
-                className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-100"
-              >
-                キャンセル
-              </button>
-              <button
-                onClick={saveApiKey}
-                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-              >
-                保存
-              </button>
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={closeAuthDialog}
+                    className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-100"
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={
+                      isAuthLoading ||
+                      !authEmail.trim() ||
+                      authPassword.length < 8 ||
+                      (isSignupMode && authPassword !== authPasswordConfirm)
+                    }
+                    className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-60"
+                  >
+                    {isAuthLoading ? '送信中…' : authPrimaryLabel}
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* 設定ダイアログ */}
-      <PreferencesDialog
-        isOpen={showPreferencesDialog}
-        onClose={closeSettingsDialog}
-        onPreferencesChange={handlePreferencesChange}
-      />
+        {showCloudDialog && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 max-w-lg w-full mx-4 shadow-2xl text-black">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold text-gray-800">クラウドに保存したテキスト</h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={fetchCloudDocuments}
+                    className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+                    title="再読み込み"
+                  >
+                    ↻
+                  </button>
+                  <button
+                    onClick={closeCloudDialog}
+                    className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+              <div className="mb-3">
+                <button
+                  onClick={handleCreateNewDocument}
+                  className="w-full border border-green-400 text-green-700 rounded-md px-3 py-2 text-sm font-semibold hover:bg-green-50 transition"
+                >
+                  ＋ 新しいドキュメントを作成
+                </button>
+              </div>
+              {isCloudLoading ? (
+                <div className="text-sm text-gray-600">読み込み中です…</div>
+              ) : cloudDocuments.length === 0 ? (
+                <div className="text-sm text-gray-600">
+                  保存済みのテキストがありません。ヘッダーの☁️ボタンから現在の原稿を保存できます。
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                  {cloudDocuments.map((doc) => (
+                    <div
+                      key={doc.id}
+                      onClick={() => loadDocumentFromCloud(doc.id)}
+                      className={`w-full border rounded px-3 py-2 hover:bg-gray-50 transition cursor-pointer ${activeDocumentId === doc.id ? 'border-blue-400 bg-blue-50' : 'border-gray-200'
+                        }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="font-semibold text-gray-800 text-sm truncate">
+                            {doc.title || DEFAULT_DOCUMENT_TITLE}
+                          </div>
+                          <div className="text-[11px] text-gray-500">
+                            更新: {new Date(doc.updatedAt).toLocaleString('ja-JP')}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openDocumentPreview(doc.id);
+                            }}
+                            disabled={isPreviewLoading && previewingDocumentId === doc.id}
+                            className="w-7 h-7 flex items-center justify-center border border-blue-300 text-blue-500 rounded text-xs hover:bg-blue-50 disabled:opacity-60"
+                            aria-label="クラウドドキュメントをプレビュー"
+                          >
+                            {isPreviewLoading && previewingDocumentId === doc.id ? (
+                              <span className="text-[11px]">…</span>
+                            ) : (
+                              <FiEye aria-hidden />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              deleteDocumentFromCloud(doc.id);
+                            }}
+                            disabled={deletingDocumentId === doc.id}
+                            className="w-7 h-7 flex items-center justify-center border border-red-400 text-red-500 rounded text-xs hover:bg-red-50 disabled:opacity-60"
+                            aria-label="クラウドドキュメントを削除"
+                          >
+                            {deletingDocumentId === doc.id ? (
+                              <span className="text-[11px]">…</span>
+                            ) : (
+                              <FiTrash aria-hidden />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
-      {cloudStatus && (
-        <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2">
-          <div
-            className={`min-w-[220px] max-w-sm rounded-lg px-4 py-3 text-sm shadow-xl border ${
-              cloudStatus.tone === 'success'
+        {previewDocument && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl p-6 max-w-2xl w-full mx-4 shadow-2xl text-black">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-800">プレビュー</h3>
+                  <p className="text-xs text-gray-500">
+                    更新: {new Date(previewDocument.updatedAt).toLocaleString('ja-JP')}
+                  </p>
+                </div>
+                <button
+                  onClick={closePreviewDialog}
+                  className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+                  aria-label="プレビューを閉じる"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="mb-4">
+                <h4 className="text-xl font-semibold text-gray-900 break-words">
+                  {previewDocument.title || DEFAULT_DOCUMENT_TITLE}
+                </h4>
+              </div>
+              <div className="border border-gray-200 rounded-lg p-4 max-h-80 overflow-y-auto bg-gray-50 text-sm leading-relaxed whitespace-pre-wrap">
+                {previewDocument.content || '内容が空です。'}
+              </div>
+              <div className="mt-4 flex justify-end">
+                <button
+                  onClick={closePreviewDialog}
+                  className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+                >
+                  閉じる
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ヘルプダイアログ */}
+        {showHelp && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 text-black">
+            <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold text-gray-800">ショートカットキー</h3>
+                <button
+                  onClick={() => setShowHelp(false)}
+                  className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="space-y-3 text-sm">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="font-semibold text-gray-700">キー</div>
+                  <div className="font-semibold text-gray-700">機能</div>
+                </div>
+
+                {editorMode === 'paged' && (
+                  <div className="grid grid-cols-2 gap-2 py-1 border-t border-gray-200">
+                    <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Ctrl + Enter</kbd>
+                    <span>新しいページを作成</span>
+                  </div>
+                )}
+
+                <div className={`grid grid-cols-2 gap-2 py-1${editorMode !== 'paged' ? ' border-t border-gray-200' : ''}`}>
+                  <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Cmd + K</kbd>
+                  <span>AI文章生成</span>
+                </div>
+
+                {editorMode === 'paged' && (
+                  <div className="grid grid-cols-2 gap-2 py-1">
+                    <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Shift + ← / →</kbd>
+                    <span>ページ移動（←次 →前）</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-2 py-1">
+                  <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">縦/横ボタン</kbd>
+                  <span>書字モード切替</span>
+                </div>
+              </div>
+
+              <div className="mt-6 p-3 bg-yellow-50 border border-yellow-200 rounded text-xs">
+                <strong>AI生成について:</strong><br />
+                右上の🔑ボタンからGoogle APIキーを設定してください。
+                <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline ml-1">
+                  API キーを取得
+                </a>
+                <div className="mt-2 text-gray-600">
+                  キーはブラウザのLocal Storageに保存され、次回以降も利用できます。
+                </div>
+              </div>
+
+              <div className="mt-4 flex justify-end">
+                <button
+                  onClick={() => setShowHelp(false)}
+                  className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
+                >
+                  閉じる
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* サービス紹介ダイアログ */}
+        {showIntroDialog && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm px-4 py-6 sm:p-8">
+            <div className="bg-white rounded-2xl p-6 sm:p-8 max-w-2xl w-full shadow-2xl border border-gray-100 animate-in slide-in-from-bottom-4 duration-500 max-h-[90vh] overflow-y-auto">
+              {/* ヘッダー */}
+              <div className="text-center mb-8">
+                <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
+                  <span className="text-white text-2xl font-bold">縦</span>
+                </div>
+                <h2 className="text-3xl font-bold text-gray-800 mb-2">tategaki へようこそ</h2>
+                <p className="text-lg text-gray-600">AI搭載の縦書きエディタ</p>
+              </div>
+
+              {/* 機能紹介 */}
+              <div className="grid md:grid-cols-2 gap-6 mb-6">
+                <div className="flex items-start space-x-3">
+                  <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
+                    <span className="text-blue-600 text-lg">✍️</span>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-gray-800 mb-1">美しい縦書き表示</h3>
+                    <p className="text-sm text-gray-600">日本語文章に最適な縦書きレイアウトで、没入感のある執筆体験を提供</p>
+                  </div>
+                </div>
+
+                <div className="flex items-start space-x-3">
+                  <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
+                    <span className="text-purple-600 text-lg">🤖</span>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-gray-800 mb-1">AI執筆支援</h3>
+                    <p className="text-sm text-gray-600">Google Gemini搭載で続きの文章生成、対話作成、描写強化をサポート</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* アクションボタン */}
+              <div className="flex flex-col sm:flex-row gap-3 mb-4">
+                <button
+                  onClick={closeIntroDialog}
+                  className="flex-1 bg-gradient-to-r from-blue-500 to-purple-600 text-white px-6 py-3 rounded-xl font-semibold hover:from-blue-600 hover:to-purple-700 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
+                >
+                  さっそく執筆を始める
+                </button>
+                <button
+                  onClick={() => {
+                    setApiKeyInput(googleApiKey);
+                    setRevealApiKey(false);
+                    setShowApiKeyDialog(true);
+                  }}
+                  className="flex-1 border border-gray-300 text-gray-800 px-6 py-3 rounded-xl font-semibold hover:bg-gray-50 transition-all duration-200"
+                >
+                  🔑 APIキーを設定
+                </button>
+              </div>
+
+              {/* フッター */}
+              <div className="text-center space-y-1">
+                <p className="text-sm text-gray-600 flex flex-col sm:flex-row items-center justify-center gap-2">
+                  <span>ログインするとクラウド保存が可能です。</span>
+                  <button
+                    type="button"
+                    onClick={() => openAuthDialog('login')}
+                    className="text-blue-600 underline underline-offset-2 hover:text-blue-700"
+                  >
+                    ログイン・アカウント作成はこちら
+                  </button>
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* APIキー設定ダイアログ */}
+        {showApiKeyDialog && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl text-black">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold text-gray-800">Google APIキー設定</h3>
+                <button
+                  onClick={() => setShowApiKeyDialog(false)}
+                  className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+                  aria-label="閉じる"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="space-y-3">
+                <p className="text-sm text-gray-700">
+                  Google Gemini を利用するための API キーを入力してください。
+                  <a
+                    href="https://aistudio.google.com/app/apikey"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 underline ml-1"
+                  >
+                    キーを取得
+                  </a>
+                </p>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">APIキー</label>
+                  <div className="flex gap-2">
+                    <input
+                      type={revealApiKey ? 'text' : 'password'}
+                      value={apiKeyInput}
+                      onChange={(e) => setApiKeyInput(e.target.value)}
+                      className="flex-1 p-2 border border-gray-300 rounded text-black"
+                      placeholder="AIza..."
+                      autoFocus
+                    />
+                    <button
+                      onClick={() => setRevealApiKey(v => !v)}
+                      className="px-2 border border-gray-300 rounded text-xs text-gray-700 hover:bg-gray-100"
+                      title={revealApiKey ? '非表示' : '表示'}
+                    >
+                      {revealApiKey ? '🙈' : '👁️'}
+                    </button>
+                  </div>
+                  {googleApiKey && (
+                    <div className="mt-1 text-xs text-gray-600">現在、保存済みのキーが設定されています。</div>
+                  )}
+                </div>
+                <div className="text-xs text-gray-600 bg-blue-50 border border-blue-200 p-2 rounded">
+                  キーはこのブラウザの Local Storage にのみ保存され、サーバーには保存されません。
+                </div>
+              </div>
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  onClick={() => setShowApiKeyDialog(false)}
+                  className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-100"
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={saveApiKey}
+                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                >
+                  保存
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 設定ダイアログ */}
+        <PreferencesDialog
+          isOpen={showPreferencesDialog}
+          onClose={closeSettingsDialog}
+          onPreferencesChange={handlePreferencesChange}
+        />
+
+        {cloudStatus && (
+          <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2">
+            <div
+              className={`min-w-[220px] max-w-sm rounded-lg px-4 py-3 text-sm shadow-xl border ${cloudStatus.tone === 'success'
                 ? 'bg-green-50 text-green-800 border-green-200'
                 : 'bg-red-50 text-red-800 border-red-200'
-            }`}
-          >
-            <div className="font-semibold text-xs mb-1">
-              {cloudStatus.tone === 'success' ? 'クラウド保存' : 'エラー'}
+                }`}
+            >
+              <div className="font-semibold text-xs mb-1">
+                {cloudStatus.tone === 'success' ? 'クラウド保存' : 'エラー'}
+              </div>
+              <div>{cloudStatus.message}</div>
             </div>
-            <div>{cloudStatus.message}</div>
           </div>
-        </div>
-      )}
+        )}
       </main>
     </div>
   );
