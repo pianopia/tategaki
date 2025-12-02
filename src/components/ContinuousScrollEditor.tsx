@@ -105,6 +105,7 @@ export default function ContinuousScrollEditor({
           onInput={handleInput}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
+          data-editor-surface="continuous"
         />
       </div>
     </div>

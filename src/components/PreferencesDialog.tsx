@@ -26,6 +26,7 @@ const DEFAULT_KEYBINDINGS: Record<string, { action: string; key: string }> = {
   jumpToLine: { action: 'Jump to line', key: 'Ctrl+G' },
   nextPage: { action: 'Go to next page', key: 'Shift+Left' },
   prevPage: { action: 'Go to previous page', key: 'Shift+Right' },
+  undo: { action: 'Undo', key: 'Ctrl+Z' },
   delete: { action: 'Delete (Del)', key: '' },
   backspace: { action: 'Backspace (BS)', key: '' },
   enter: { action: 'Enter', key: '' },
@@ -33,6 +34,9 @@ const DEFAULT_KEYBINDINGS: Record<string, { action: string; key: string }> = {
   moveDown: { action: 'Move down (Down arrow)', key: '' },
   moveLeft: { action: 'Move left (Left arrow)', key: '' },
   moveRight: { action: 'Move right (Right arrow)', key: '' },
+  lineStart: { action: 'Jump to line start', key: '' },
+  lineEnd: { action: 'Jump to line end', key: '' },
+  deleteLine: { action: 'Delete current line', key: '' },
 };
 
 export function PreferencesDialog({

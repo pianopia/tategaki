@@ -27,6 +27,12 @@ type CloudDocumentSummary = {
 };
 
 type AuthMode = 'login' | 'signup';
+type TocHeading = {
+  id: string;
+  title: string;
+  level: number;
+  pageIndex: number;
+};
 
 const PAGE_BREAK_SENTINEL = '\n\n=== tategaki:page-break ===\n\n';
 const DEFAULT_DOCUMENT_TITLE = '無題';
@@ -99,6 +105,108 @@ const joinPagesForContinuous = (pagesData: Page[]) =>
 const splitContinuousHtml = (html: string) => {
   if (!html) return [''];
   return html.split(CONTINUOUS_BREAK_MARK);
+};
+
+const slugifyHeading = (text: string) => {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\-_.\s]/gu, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || 'heading';
+};
+
+const normalizeHeadingsInHtml = (html: string, pageIndex: number): { html: string; headings: TocHeading[] } => {
+  if (typeof document === 'undefined') {
+    return { html, headings: [] };
+  }
+
+  const container = document.createElement('div');
+  container.innerHTML = html || '';
+  const headings: TocHeading[] = [];
+
+  const upsertHeadingEntry = (el: HTMLElement, level: number, title: string) => {
+    const safeLevel = Math.min(Math.max(level || 1, 1), 6);
+    const normalizedTitle = title.trim() || `見出し ${headings.length + 1}`;
+    const baseId = slugifyHeading(normalizedTitle);
+    const headingId = el.dataset.headingId || `${baseId}-${pageIndex + 1}-${headings.length + 1}`;
+
+    el.dataset.headingId = headingId;
+    el.dataset.headingLevel = String(safeLevel);
+    el.dataset.headingPage = String(pageIndex);
+    el.classList.add('tategaki-heading');
+    headings.push({
+      id: headingId,
+      title: normalizedTitle,
+      level: safeLevel,
+      pageIndex,
+    });
+  };
+
+  const blockSelector = 'h1,h2,h3,h4,h5,h6,div,p';
+  Array.from(container.querySelectorAll(blockSelector)).forEach((node) => {
+    const el = node as HTMLElement;
+    const tag = el.tagName.toLowerCase();
+    const text = (el.textContent || '').trim();
+    if (!text) return;
+
+    if (/^h[1-6]$/.test(tag)) {
+      const level = Number(tag.slice(1));
+      upsertHeadingEntry(el, level, text);
+      return;
+    }
+
+    const mdMatch = text.match(/^(#{1,6})\s+(.*)$/);
+    if (mdMatch) {
+      const level = Math.min(mdMatch[1].length, 6);
+      const title = mdMatch[2].trim() || text.replace(/^#{1,6}\s+/, '').trim();
+      const headingEl = document.createElement(`h${level}`);
+      headingEl.textContent = title;
+      headingEl.dataset.headingLevel = String(level);
+      headingEl.dataset.headingPage = String(pageIndex);
+      headingEl.className = 'tategaki-heading';
+      const baseId = slugifyHeading(title);
+      const headingId = `${baseId}-${pageIndex + 1}-${headings.length + 1}`;
+      headingEl.dataset.headingId = headingId;
+      headings.push({
+        id: headingId,
+        title,
+        level,
+        pageIndex,
+      });
+      el.replaceWith(headingEl);
+    }
+  });
+
+  return {
+    html: container.innerHTML,
+    headings,
+  };
+};
+
+const collectHeadingsFromPages = (pagesData: Page[]): TocHeading[] => {
+  if (typeof document === 'undefined') return [];
+  const items: TocHeading[] = [];
+
+  pagesData.forEach((page, pageIndex) => {
+    const container = document.createElement('div');
+    container.innerHTML = page.content || '';
+    const headingNodes = Array.from(container.querySelectorAll('h1,h2,h3,h4,h5,h6')) as HTMLElement[];
+    headingNodes.forEach((node, idx) => {
+      const level = Math.min(Number(node.tagName.slice(1)) || 1, 6);
+      const title = (node.textContent || '').trim() || `見出し ${idx + 1}`;
+      const headingId = node.dataset.headingId || `${slugifyHeading(title)}-${pageIndex + 1}-${idx + 1}`;
+      items.push({
+        id: headingId,
+        title,
+        level,
+        pageIndex,
+      });
+    });
+  });
+
+  return items;
 };
 
 type RevisionEntry = {
@@ -207,6 +315,8 @@ export default function TategakiEditor() {
   const [editorTextColor, setEditorTextColor] = useState('#000000');
   const [editorKeybindings, setEditorKeybindings] = useState<Record<string, string>>({});
   const [showJumpDialog, setShowJumpDialog] = useState(false);
+  const [tocHeadings, setTocHeadings] = useState<TocHeading[]>([]);
+  const [isTocOpen, setIsTocOpen] = useState(false);
   const activeCloudDocument = useMemo(() => {
     if (!activeDocumentId) return null;
     return cloudDocuments.find(doc => doc.id === activeDocumentId) ?? null;
@@ -272,6 +382,105 @@ export default function TategakiEditor() {
 
     selection.removeAllRanges();
     selection.addRange(range);
+  };
+
+  const getCursorTextOffset = () => {
+    if (!editorRef.current) return null;
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return null;
+    const range = selection.getRangeAt(0);
+    const preRange = range.cloneRange();
+    preRange.selectNodeContents(editorRef.current);
+    preRange.setEnd(range.endContainer, range.endOffset);
+    return preRange.toString().length;
+  };
+
+  const restoreCursorByOffset = (offset: number | null) => {
+    if (offset === null || !editorRef.current) return;
+    const walker = document.createTreeWalker(editorRef.current, NodeFilter.SHOW_TEXT);
+
+    let totalLength = 0;
+    let nodeForCount: Node | null = walker.nextNode();
+    while (nodeForCount) {
+      totalLength += nodeForCount.textContent?.length ?? 0;
+      nodeForCount = walker.nextNode();
+    }
+
+    const targetOffset = Math.max(0, Math.min(offset, totalLength));
+
+    const walker2 = document.createTreeWalker(editorRef.current, NodeFilter.SHOW_TEXT);
+    let remaining = targetOffset;
+    let node: Node | null = walker2.nextNode();
+
+    while (node) {
+      const length = node.textContent?.length ?? 0;
+      if (remaining <= length) {
+        const range = document.createRange();
+        range.setStart(node, Math.max(0, remaining));
+        range.collapse(true);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        return;
+      }
+      remaining -= length;
+      node = walker2.nextNode();
+    }
+
+    moveCursorToEnd();
+  };
+
+  const getCursorOffsetInElement = (root: HTMLElement | null) => {
+    if (!root) return null;
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return null;
+    const range = selection.getRangeAt(0);
+    const preRange = range.cloneRange();
+    preRange.selectNodeContents(root);
+    preRange.setEnd(range.endContainer, range.endOffset);
+    return preRange.toString().length;
+  };
+
+  const restoreCursorInElementByOffset = (root: HTMLElement | null, offset: number | null) => {
+    if (!root || offset === null) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+
+    let totalLength = 0;
+    let nodeForCount: Node | null = walker.nextNode();
+    while (nodeForCount) {
+      totalLength += nodeForCount.textContent?.length ?? 0;
+      nodeForCount = walker.nextNode();
+    }
+
+    const targetOffset = Math.max(0, Math.min(offset, totalLength));
+
+    const walker2 = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let remaining = targetOffset;
+    let node: Node | null = walker2.nextNode();
+
+    while (node) {
+      const length = node.textContent?.length ?? 0;
+      if (remaining <= length) {
+        const range = document.createRange();
+        range.setStart(node, Math.max(0, remaining));
+        range.collapse(true);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        return;
+      }
+      remaining -= length;
+      node = walker2.nextNode();
+    }
+
+    const selection = window.getSelection();
+    if (selection) {
+      const range = document.createRange();
+      range.selectNodeContents(root);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
   };
 
   // 実際のコンテンツ量を計算する関数（縦書き・横書き両対応）
@@ -676,8 +885,46 @@ export default function TategakiEditor() {
 
   // エディタの内容が変更されたときの処理
   const handleEditorChange = () => {
-    if (editorRef.current) {
+    if (editorRef.current && currentPage) {
+      const cursorOffsetBefore = getCursorTextOffset();
+      const selection = window.getSelection();
+      let markerInserted = false;
+
+      if (selection && selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0);
+        const marker = document.createElement('span');
+        marker.dataset.caretMarker = 'true';
+        marker.textContent = '\u200b';
+        range.insertNode(marker);
+        range.setStartAfter(marker);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        markerInserted = true;
+      }
+
+      const rawContent = editorRef.current.innerHTML;
+      const { html: normalizedContent } = normalizeHeadingsInHtml(rawContent, currentPageIndex);
+
+      if (normalizedContent !== rawContent) {
+        editorRef.current.innerHTML = normalizedContent;
+      }
+
+      const markerNode = editorRef.current.querySelector('[data-caret-marker="true"]');
+      if (markerNode) {
+        const range = document.createRange();
+        range.selectNodeContents(markerNode);
+        range.collapse(false);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+        markerNode.parentNode?.removeChild(markerNode);
+      } else if (cursorOffsetBefore !== null) {
+        restoreCursorByOffset(cursorOffsetBefore);
+      }
+
       const content = editorRef.current.innerHTML;
+
       // 変更がない場合はページ配列を更新しない（無限再レンダを防止）
       let updatedPages = pages;
       if (content !== currentPage.content) {
@@ -812,6 +1059,7 @@ export default function TategakiEditor() {
     jumpToLine: 'Ctrl+G',
     nextPage: 'Shift+ArrowLeft',
     prevPage: 'Shift+ArrowRight',
+    undo: 'Ctrl+Z',
     delete: '',
     backspace: '',
     enter: '',
@@ -819,6 +1067,9 @@ export default function TategakiEditor() {
     moveDown: '',
     moveLeft: '',
     moveRight: '',
+    lineStart: '',
+    lineEnd: '',
+    deleteLine: '',
   };
 
   // Helper function to check if pressed key matches a keybinding
@@ -860,6 +1111,7 @@ export default function TategakiEditor() {
       jumpToLine: editorKeybindings.jumpToLine || DEFAULT_KEYBINDINGS.jumpToLine,
       nextPage: editorKeybindings.nextPage || DEFAULT_KEYBINDINGS.nextPage,
       prevPage: editorKeybindings.prevPage || DEFAULT_KEYBINDINGS.prevPage,
+      undo: editorKeybindings.undo || DEFAULT_KEYBINDINGS.undo,
       delete: editorKeybindings.delete || DEFAULT_KEYBINDINGS.delete,
       backspace: editorKeybindings.backspace || DEFAULT_KEYBINDINGS.backspace,
       enter: editorKeybindings.enter || DEFAULT_KEYBINDINGS.enter,
@@ -867,6 +1119,9 @@ export default function TategakiEditor() {
       moveDown: editorKeybindings.moveDown || DEFAULT_KEYBINDINGS.moveDown,
       moveLeft: editorKeybindings.moveLeft || DEFAULT_KEYBINDINGS.moveLeft,
       moveRight: editorKeybindings.moveRight || DEFAULT_KEYBINDINGS.moveRight,
+      lineStart: editorKeybindings.lineStart || DEFAULT_KEYBINDINGS.lineStart,
+      lineEnd: editorKeybindings.lineEnd || DEFAULT_KEYBINDINGS.lineEnd,
+      deleteLine: editorKeybindings.deleteLine || DEFAULT_KEYBINDINGS.deleteLine,
     };
 
     if (editorMode === 'paged' && matchesKeybinding(e, activeKeybindings.addPage)) {
@@ -884,6 +1139,9 @@ export default function TategakiEditor() {
     } else if (editorMode === 'paged' && matchesKeybinding(e, activeKeybindings.prevPage)) {
       e.preventDefault();
       goToPage(currentPageIndex - 1); // 右矢印で前のページへ（縦書きでは右が戻る方向）
+    } else if (matchesKeybinding(e, activeKeybindings.undo)) {
+      e.preventDefault();
+      document.execCommand('undo');
     } else if (matchesKeybinding(e, activeKeybindings.delete)) {
       e.preventDefault();
       document.execCommand('forwardDelete');
@@ -893,6 +1151,14 @@ export default function TategakiEditor() {
     } else if (matchesKeybinding(e, activeKeybindings.enter)) {
       e.preventDefault();
       document.execCommand('insertParagraph');
+    } else if (matchesKeybinding(e, activeKeybindings.lineStart)) {
+      e.preventDefault();
+      const selection = window.getSelection();
+      if (selection) selection.modify('move', 'backward', 'lineboundary');
+    } else if (matchesKeybinding(e, activeKeybindings.lineEnd)) {
+      e.preventDefault();
+      const selection = window.getSelection();
+      if (selection) selection.modify('move', 'forward', 'lineboundary');
     } else if (matchesKeybinding(e, activeKeybindings.moveUp)) {
       e.preventDefault();
       const selection = window.getSelection();
@@ -909,6 +1175,29 @@ export default function TategakiEditor() {
       e.preventDefault();
       const selection = window.getSelection();
       if (selection) selection.modify('move', 'forward', 'character');
+    } else if (matchesKeybinding(e, activeKeybindings.deleteLine)) {
+      e.preventDefault();
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) return;
+
+      // Capture current line bounds and remove its content
+      selection.modify('move', 'backward', 'lineboundary');
+      const startNode = selection.anchorNode;
+      const startOffset = selection.anchorOffset;
+      selection.modify('move', 'forward', 'lineboundary');
+      const endNode = selection.anchorNode;
+      const endOffset = selection.anchorOffset;
+
+      if (!startNode || !endNode) return;
+
+      const range = document.createRange();
+      range.setStart(startNode, startOffset);
+      range.setEnd(endNode, endOffset);
+      range.deleteContents();
+
+      selection.removeAllRanges();
+      range.collapse(true);
+      selection.addRange(range);
     }
   };
 
@@ -945,6 +1234,45 @@ export default function TategakiEditor() {
         editorRef.current?.focus();
         moveCursorToEnd();
       }, 50);
+    }
+  };
+
+  const scrollHeadingIntoView = (headingId: string) => {
+    const isPaged = editorMode === 'paged';
+    const root = isPaged
+      ? editorRef.current
+      : (document.querySelector('[data-editor-surface=\"continuous\"]') as HTMLElement | null);
+    if (!root) return;
+
+    const target = root.querySelector(`[data-heading-id=\"${headingId}\"]`) as HTMLElement | null;
+    if (!target) return;
+
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(target);
+    range.collapse(true);
+
+    // insert temporary marker to leverage same scroll behaviour as line jump
+    const span = document.createElement('span');
+    range.insertNode(span);
+    span.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+    span.parentNode?.removeChild(span);
+
+    if (selection) {
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+
+    (root as HTMLElement).focus();
+  };
+
+  const handleTocJump = (heading: TocHeading) => {
+    setIsTocOpen(false);
+    if (editorMode === 'paged') {
+      goToPage(heading.pageIndex);
+      setTimeout(() => scrollHeadingIntoView(heading.id), 80);
+    } else {
+      setTimeout(() => scrollHeadingIntoView(heading.id), 0);
     }
   };
 
@@ -1060,13 +1388,18 @@ export default function TategakiEditor() {
             .replace(/\n/g, '<br>')
         }));
 
+        const normalizedPages = newPages.map((page, index) => {
+          const { html } = normalizeHeadingsInHtml(page.content, index);
+          return { ...page, content: html };
+        });
+
         // 最低1ページは必要
-        if (newPages.length === 0) {
-          newPages.push({ id: '1', content: '' });
+        if (normalizedPages.length === 0) {
+          normalizedPages.push({ id: '1', content: '' });
         }
 
         suppressAutoSaveRef.current = true;
-        setPages(newPages);
+        setPages(normalizedPages);
         setCurrentPageIndex(0);
         setActiveDocumentId(null);
         setRevisionTimeline([]);
@@ -1137,14 +1470,20 @@ export default function TategakiEditor() {
     } else {
       const sourceHtml = continuousHtml || joinPagesForContinuous(pages);
       const segments = splitContinuousHtml(sourceHtml);
+      const headingItems: TocHeading[] = [];
       const nextPages =
         segments.length > 0
-          ? segments.map((content, index) => ({
-            id: pages[index]?.id ?? generatePageId(),
-            content,
-          }))
+          ? segments.map((content, index) => {
+            const { html: normalizedHtml, headings } = normalizeHeadingsInHtml(content, index);
+            headingItems.push(...headings);
+            return {
+              id: pages[index]?.id ?? generatePageId(),
+              content: normalizedHtml,
+            };
+          })
           : [{ id: generatePageId(), content: '' }];
       setPages(nextPages);
+      setTocHeadings(headingItems);
       setCurrentPageIndex(0);
       setTimeout(() => {
         if (editorRef.current) {
@@ -1368,7 +1707,12 @@ export default function TategakiEditor() {
       revision.pages.length > 0
         ? revision.pages.map((page) => ({ ...page }))
         : normalizePagesPayload(undefined, revision.content);
-    setPages(nextPages.length > 0 ? nextPages : [{ id: '1', content: '' }]);
+    const normalizedPages =
+      (nextPages.length > 0 ? nextPages : [{ id: '1', content: '' }]).map((page, index) => {
+        const { html } = normalizeHeadingsInHtml(page.content, index);
+        return { ...page, content: html };
+      });
+    setPages(normalizedPages.length > 0 ? normalizedPages : [{ id: '1', content: '' }]);
     setCurrentPageIndex(0);
     setDocumentTitle(revision.title || DEFAULT_DOCUMENT_TITLE);
     if (!options?.silent) {
@@ -1394,18 +1738,75 @@ export default function TategakiEditor() {
   };
 
   const handleContinuousContentChange = (html: string) => {
-    setContinuousHtml(html);
-    const segments = splitContinuousHtml(html);
+    const surface = document.querySelector('[data-editor-surface="continuous"]') as HTMLElement | null;
+    const selection = window.getSelection();
+    let useHtml = html;
+    let markerInserted = false;
+
+    if (surface && selection && selection.rangeCount > 0 && surface.contains(selection.anchorNode)) {
+      const range = selection.getRangeAt(0);
+      const marker = document.createElement('span');
+      marker.dataset.caretMarker = 'true';
+      marker.textContent = '\u200b';
+      range.insertNode(marker);
+      range.setStartAfter(marker);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      markerInserted = true;
+      useHtml = surface.innerHTML;
+    }
+
+    const cursorOffset = markerInserted ? null : getCursorOffsetInElement(surface);
+
+    const segments = splitContinuousHtml(useHtml);
     if (segments.length === 0) {
       setPages([{ id: generatePageId(), content: '' }]);
+      setContinuousHtml('');
+      setTocHeadings([]);
       return;
     }
-    setPages((prev) =>
-      segments.map((content, index) => ({
-        id: prev[index]?.id ?? generatePageId(),
-        content,
-      }))
-    );
+
+    const headingItems: TocHeading[] = [];
+    const normalizedSegments: string[] = [];
+    const nextPages =
+      segments.map((content, index) => {
+        const { html: normalizedHtml, headings } = normalizeHeadingsInHtml(content, index);
+        headingItems.push(...headings);
+        normalizedSegments.push(normalizedHtml);
+        return {
+          id: pages[index]?.id ?? generatePageId(),
+          content: normalizedHtml,
+        };
+      }) || [];
+
+    const safePages = nextPages.length > 0 ? nextPages : [{ id: generatePageId(), content: '' }];
+    setPages(safePages);
+    setContinuousHtml(normalizedSegments.join(CONTINUOUS_BREAK_MARK));
+    setTocHeadings(headingItems);
+
+    if (markerInserted) {
+      setTimeout(() => {
+        const updatedSurface = document.querySelector('[data-editor-surface="continuous"]') as HTMLElement | null;
+        const markerNode = updatedSurface?.querySelector('[data-caret-marker="true"]') as HTMLElement | null;
+        if (markerNode) {
+          const range = document.createRange();
+          range.selectNodeContents(markerNode);
+          range.collapse(false);
+          const sel = window.getSelection();
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+          markerNode.parentNode?.removeChild(markerNode);
+        }
+        updatedSurface?.focus();
+      }, 0);
+    } else if (cursorOffset !== null) {
+      setTimeout(() => {
+        const updatedSurface = document.querySelector('[data-editor-surface="continuous"]') as HTMLElement | null;
+        restoreCursorInElementByOffset(updatedSurface, cursorOffset);
+        updatedSurface?.focus();
+      }, 0);
+    }
   };
 
   const saveDocumentToCloud = async () => {
@@ -1499,8 +1900,15 @@ export default function TategakiEditor() {
         typeof data.document?.content === 'string' ? data.document.content : ''
       );
 
+      const normalizedRemotePages = (remotePages.length > 0 ? remotePages : [{ id: '1', content: '' }]).map(
+        (page, index) => {
+          const { html } = normalizeHeadingsInHtml(page.content, index);
+          return { ...page, content: html };
+        }
+      );
+
       suppressAutoSaveRef.current = true;
-      setPages(remotePages.length > 0 ? remotePages : [{ id: '1', content: '' }]);
+      setPages(normalizedRemotePages.length > 0 ? normalizedRemotePages : [{ id: '1', content: '' }]);
       setCurrentPageIndex(0);
       setActiveDocumentId(documentId);
       lastRevisionSavedAtRef.current = null;
@@ -1756,6 +2164,11 @@ export default function TategakiEditor() {
 
   useEffect(() => {
     setCharCount(computeTotalChars(pages));
+  }, [pages]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    setTocHeadings(collectHeadingsFromPages(pages));
   }, [pages]);
 
   // Update editor styles when theme changes
@@ -2056,6 +2469,17 @@ export default function TategakiEditor() {
             title="サービス紹介"
           >
             ℹ
+          </button>
+
+          {/* 目次ボタン */}
+          <button
+            onClick={() => setIsTocOpen((prev) => !prev)}
+            className={`w-6 h-6 border border-gray-400 rounded text-xs hover:bg-gray-100 ${isTocOpen ? 'bg-gray-200 text-gray-900' : 'text-gray-700'
+              }`}
+            title="目次を開く"
+            aria-pressed={isTocOpen}
+          >
+            📑
           </button>
 
           {/* ヘルプボタン */}
@@ -2418,6 +2842,66 @@ export default function TategakiEditor() {
             backgroundColor: editorTheme === 'custom' ? editorBackgroundColor : editorTheme === 'dark' ? '#000000' : '#FFFFFF'
           }}
         >
+          {isTocOpen && (
+            <div
+              className="absolute right-3 top-3 sm:right-4 sm:top-4 z-30 w-72 max-w-[90vw] rounded-lg shadow-2xl border"
+              style={{
+                backgroundColor: editorTheme === 'dark' ? 'rgba(31,41,55,0.98)' : 'rgba(255,255,255,0.97)',
+                borderColor: editorTheme === 'dark' ? '#4b5563' : '#e5e7eb',
+                color: editorTheme === 'dark' ? '#e5e7eb' : '#111827'
+              }}
+            >
+              <div
+                className="flex items-center justify-between px-3 py-2 border-b"
+                style={{ borderColor: editorTheme === 'dark' ? '#4b5563' : '#e5e7eb' }}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold">目次</span>
+                  <span className="text-[11px] text-gray-500">
+                    {tocHeadings.length ? `${tocHeadings.length} 件` : '見出しを作成すると表示されます'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsTocOpen(false)}
+                  className="w-6 h-6 rounded text-xs border border-gray-300 hover:bg-gray-100 text-gray-600"
+                  aria-label="目次を閉じる"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="max-h-[70vh] overflow-y-auto divide-y divide-gray-200">
+                {tocHeadings.length === 0 ? (
+                  <div className="px-3 py-4 text-sm text-gray-500">
+                    行頭に <code># 見出し</code> のように入力すると、自動で見出し化してここに並びます。
+                  </div>
+                ) : (
+                  tocHeadings.map((heading) => (
+                    <button
+                      key={heading.id}
+                      type="button"
+                      onClick={() => handleTocJump(heading)}
+                      className="w-full text-left px-3 py-2 hover:bg-gray-50 focus:outline-none"
+                    >
+                      <div className="flex items-start gap-2">
+                        <span className="text-[11px] text-gray-500 shrink-0">P{heading.pageIndex + 1}</span>
+                        <span
+                          className="text-sm leading-relaxed break-words"
+                          style={{
+                            paddingLeft: Math.max(0, (heading.level - 1) * 12),
+                            fontWeight: heading.level <= 2 ? 700 : 600
+                          }}
+                        >
+                          {heading.title}
+                        </span>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
           {editorMode === 'paged' ? (
             <>
               {lineCount >= maxLinesPerPage * 0.9 && lineCount < maxLinesPerPage && (

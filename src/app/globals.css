@@ -136,3 +136,35 @@ body {
   outline: 2px solid #f59e0b;
   outline-offset: 2px;
 }
+
+.tategaki-heading {
+  margin: 0 0 0.5em 0;
+  padding: 0;
+  letter-spacing: 0.01em;
+}
+
+.tategaki-heading[data-heading-level="1"] {
+  font-size: 1.3em;
+  font-weight: 800;
+}
+
+.tategaki-heading[data-heading-level="2"] {
+  font-size: 1.2em;
+  font-weight: 700;
+}
+
+.tategaki-heading[data-heading-level="3"] {
+  font-size: 1.1em;
+  font-weight: 700;
+}
+
+.tategaki-heading[data-heading-level="4"] {
+  font-size: 1.05em;
+  font-weight: 600;
+}
+
+.tategaki-heading[data-heading-level="5"],
+.tategaki-heading[data-heading-level="6"] {
+  font-size: 1em;
+  font-weight: 600;
+}
