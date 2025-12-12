@@ -26,8 +26,10 @@ export default function ContinuousScrollEditor({
   const editorRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
+  const isComposing = useRef(false);
+
   useEffect(() => {
-    if (editorRef.current && editorRef.current.innerHTML !== value) {
+    if (!isComposing.current && editorRef.current && editorRef.current.innerHTML !== value) {
       editorRef.current.innerHTML = value || '';
     }
   }, [value]);
@@ -64,7 +66,17 @@ export default function ContinuousScrollEditor({
 
   const handleInput = () => {
     if (!editorRef.current) return;
+    if (isComposing.current) return; // Skip updates during composition
     onChange(editorRef.current.innerHTML);
+  };
+
+  const handleCompositionStart = () => {
+    isComposing.current = true;
+  };
+
+  const handleCompositionEnd = () => {
+    isComposing.current = false;
+    handleInput();
   };
 
   const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
@@ -103,6 +115,8 @@ export default function ContinuousScrollEditor({
             padding: isVertical ? '32px 80px 32px 32px' : '32px 32px 32px 80px',
           }}
           onInput={handleInput}
+          onCompositionStart={handleCompositionStart}
+          onCompositionEnd={handleCompositionEnd}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
           data-editor-surface="continuous"

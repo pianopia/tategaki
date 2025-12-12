@@ -2068,6 +2068,9 @@ export default function TategakiEditor() {
     const page = pages[currentPageIndex];
     if (!page) return;
 
+    // COMPOSE中は更新しない
+    if (isComposing.current) return;
+
     // すでにDOMと状態が一致している場合は再描画しない（タイピングの引っかかり防止）
     if (editorRef.current.innerHTML === page.content) return;
 
@@ -2942,11 +2945,26 @@ export default function TategakiEditor() {
                   color: editorTheme === 'custom' ? editorTextColor : editorTheme === 'dark' ? '#FFFFFF' : '#000000',
                   caretColor: editorTheme === 'custom' ? editorTextColor : editorTheme === 'dark' ? '#FFFFFF' : '#000000'
                 }}
-                onInput={handleEditorChange}
-                onCompositionStart={handleCompositionStart}
-                onCompositionEnd={handleCompositionEnd}
-                onPaste={handlePaste}
+                onInput={() => {
+                  if (isComposing.current) return;
+                  handleEditorChange();
+                }}
+                onCompositionStart={() => {
+                  isComposing.current = true;
+                }}
+                onCompositionEnd={() => {
+                  isComposing.current = false;
+                  handleEditorChange();
+                }}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+                onBlur={() => {
+                  // フォーカスが外れたら念のためコミットしておく
+                  if (isComposing.current) {
+                    isComposing.current = false;
+                    handleEditorChange();
+                  }
+                }}
                 suppressContentEditableWarning={true}
                 data-writing-mode={isVertical ? 'vertical' : 'horizontal'}
                 data-content-type="novel-manuscript"
