@@ -307,6 +307,7 @@ export default function TategakiEditor() {
   const saveDocumentToCloudRef = useRef<(() => Promise<void>) | null>(null);
   const lastRevisionSavedAtRef = useRef<number | null>(null);
   const suppressAutoSaveRef = useRef(false);
+  const isComposing = useRef(false);
   const [isMobileView, setIsMobileView] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [showPreferencesDialog, setShowPreferencesDialog] = useState(false);
@@ -883,8 +884,21 @@ export default function TategakiEditor() {
     }
   };
 
+  // IME入力中の制御
+  const handleCompositionStart = () => {
+    isComposing.current = true;
+  };
+
+  const handleCompositionEnd = () => {
+    isComposing.current = false;
+    handleEditorChange();
+  };
+
   // エディタの内容が変更されたときの処理
   const handleEditorChange = () => {
+    // IME入力中は処理をスキップ（確定後に処理する）
+    if (isComposing.current) return;
+
     if (editorRef.current && currentPage) {
       const cursorOffsetBefore = getCursorTextOffset();
       const selection = window.getSelection();
@@ -2916,7 +2930,7 @@ export default function TategakiEditor() {
                 aria-label={`${isVertical ? '縦書き' : '横書き'}小説執筆エディタ - ページ ${currentPageIndex + 1}/${pages.length}`}
                 aria-multiline="true"
                 aria-describedby={isMobileView ? undefined : 'editor-stats'}
-                className={`w-full h-full p-8 outline-none resize-none text-lg leading-relaxed editor-focus ${isVertical
+                className={`w-full h-full p-8 pb-32 outline-none resize-none text-lg leading-relaxed editor-focus ${isVertical
                   ? 'writing-mode-vertical-rl text-orientation-upright'
                   : 'writing-mode-horizontal-tb'
                   }`}
@@ -2929,6 +2943,8 @@ export default function TategakiEditor() {
                   caretColor: editorTheme === 'custom' ? editorTextColor : editorTheme === 'dark' ? '#FFFFFF' : '#000000'
                 }}
                 onInput={handleEditorChange}
+                onCompositionStart={handleCompositionStart}
+                onCompositionEnd={handleCompositionEnd}
                 onPaste={handlePaste}
                 onKeyDown={handleKeyDown}
                 suppressContentEditableWarning={true}
