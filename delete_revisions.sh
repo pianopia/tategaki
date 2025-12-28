@@ -1,5 +1,5 @@
 #!/bin/bash
-REVISIONS=$(gcloud run revisions list --service countdown --region asia-east1 --format="value(name)")
+REVISIONS=$(gcloud run revisions list --service tategaki --region asia-east1 --format="value(name)")
 
 # 各リビジョンを削除（現在使用中のものは除く）
 for REVISION in $REVISIONS; do

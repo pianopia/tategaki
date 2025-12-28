@@ -19,7 +19,8 @@ export async function GET(_request: Request, context: DocumentParams) {
   }
 
   try {
-    const documentId = context.params?.documentId;
+    const params = await context.params;
+    const documentId = params?.documentId;
     if (!documentId) {
       return NextResponse.json(
         { error: '不正なパラメータです' },
@@ -78,7 +79,8 @@ export async function DELETE(
   }
 
   try {
-    const documentId = context.params?.documentId;
+    const params = await context.params;
+    const documentId = params?.documentId;
     if (!documentId) {
       return NextResponse.json(
         { error: '不正なパラメータです' },
