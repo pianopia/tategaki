@@ -1,8 +1,8 @@
 # ビルド
-docker buildx build -t asia-east1-docker.pkg.dev/frash-447004/tategaki/tategaki:latest --platform linux/amd64 .
+docker buildx build -t asia-east1-docker.pkg.dev/frash-447004/tategaki/tategaki:latest --platform linux/amd64 . || exit 1
 
 # プッシュ
-docker push asia-east1-docker.pkg.dev/frash-447004/tategaki/tategaki:latest
+docker push asia-east1-docker.pkg.dev/frash-447004/tategaki/tategaki:latest || exit 1
 
 gcloud run deploy tategaki --image asia-east1-docker.pkg.dev/frash-447004/tategaki/tategaki:latest --platform managed --set-env-vars NODE_ENV=production --region=asia-east1
 

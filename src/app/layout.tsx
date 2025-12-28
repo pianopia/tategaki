@@ -1,13 +1,6 @@
 import type { Metadata } from "next";
-import { Noto_Serif_JP } from "next/font/google";
 import "./globals.css";
 import Script from "next/script";
-
-const notoSerifJP = Noto_Serif_JP({
-  variable: "--font-noto-serif-jp",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-});
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://tategaki.vercel.app"),
@@ -26,8 +19,8 @@ export const metadata: Metadata = {
     ]
   },
   keywords: [
-    "縦書き小説エディタ","縦書きエディタ","AI執筆支援", "小説執筆", "文芸創作",
-    "縦書きアプリ","縦書きソフト","WEB縦書き",
+    "縦書き小説エディタ", "縦書きエディタ", "AI執筆支援", "小説執筆", "文芸創作",
+    "縦書きアプリ", "縦書きソフト", "WEB縦書き",
     "小説家", "ライター", "同人小説", "創作ツール", "無料エディタ",
     "文章作成", "テキストエディタ", "執筆環境", "文字数カウント",
     "改ページ機能", "Gemini AI", "文章生成", "執筆支援AI",
@@ -114,6 +107,12 @@ export default function RootLayout({
   return (
     <html lang="ja" suppressHydrationWarning>
       <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;500;600;700&display=swap"
+          rel="stylesheet"
+        />
         {/* Google tag (gtag.js) */}
         <Script
           src="https://www.googletagmanager.com/gtag/js?id=G-9QRBL9RQ90"
@@ -137,7 +136,10 @@ export default function RootLayout({
         <meta name="format-detection" content="telephone=no" />
       </head>
       <body
-        className={`${notoSerifJP.variable} antialiased`}
+        className="antialiased"
+        style={{
+          ['--font-noto-serif-jp' as string]: '"Noto Serif JP", serif'
+        }}
       >
         {children}
       </body>
