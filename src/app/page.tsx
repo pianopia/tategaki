@@ -117,25 +117,45 @@ const slugifyHeading = (text: string) => {
     .replace(/^-|-$/g, '') || 'heading';
 };
 
-const normalizeHeadingsInHtml = (html: string, pageIndex: number): { html: string; headings: TocHeading[] } => {
+const normalizeHeadingsInHtml = (html: string, pageIndex: number): { html: string; headings: TocHeading[]; hasChanges: boolean } => {
   if (typeof document === 'undefined') {
-    return { html, headings: [] };
+    return { html, headings: [], hasChanges: false };
   }
 
   const container = document.createElement('div');
   container.innerHTML = html || '';
   const headings: TocHeading[] = [];
+  let hasChanges = false;
 
   const upsertHeadingEntry = (el: HTMLElement, level: number, title: string) => {
     const safeLevel = Math.min(Math.max(level || 1, 1), 6);
     const normalizedTitle = title.trim() || `見出し ${headings.length + 1}`;
     const baseId = slugifyHeading(normalizedTitle);
-    const headingId = el.dataset.headingId || `${baseId}-${pageIndex + 1}-${headings.length + 1}`;
 
-    el.dataset.headingId = headingId;
-    el.dataset.headingLevel = String(safeLevel);
-    el.dataset.headingPage = String(pageIndex);
-    el.classList.add('tategaki-heading');
+    // Check current state before modifying
+    const currentId = el.dataset.headingId;
+    const currentLevel = el.dataset.headingLevel;
+    const currentPage = el.dataset.headingPage;
+    const currentClass = el.classList.contains('tategaki-heading');
+
+    const headingId = currentId || `${baseId}-${pageIndex + 1}-${headings.length + 1}`;
+
+    const newLevelStr = String(safeLevel);
+    const newPageStr = String(pageIndex);
+
+    if (
+      currentId !== headingId ||
+      currentLevel !== newLevelStr ||
+      currentPage !== newPageStr ||
+      !currentClass
+    ) {
+      el.dataset.headingId = headingId;
+      el.dataset.headingLevel = newLevelStr;
+      el.dataset.headingPage = newPageStr;
+      el.classList.add('tategaki-heading');
+      hasChanges = true;
+    }
+
     headings.push({
       id: headingId,
       title: normalizedTitle,
@@ -176,12 +196,14 @@ const normalizeHeadingsInHtml = (html: string, pageIndex: number): { html: strin
         pageIndex,
       });
       el.replaceWith(headingEl);
+      hasChanges = true;
     }
   });
 
   return {
     html: container.innerHTML,
     headings,
+    hasChanges,
   };
 };
 
@@ -900,6 +922,57 @@ export default function TategakiEditor() {
     if (isComposing.current) return;
 
     if (editorRef.current && currentPage) {
+      // まず現在の内容で構造変化が必要かチェック
+      // この時点ではDOMを変更しない（マーカー挿入もしない）
+      const currentRawContent = editorRef.current.innerHTML;
+      const { hasChanges: structureChanged } = normalizeHeadingsInHtml(currentRawContent, currentPageIndex);
+
+      if (!structureChanged) {
+        // 構造変化（見出しなどのMarkdown変換）が不要な場合
+        // DOMを一切触らず、Reactのstateのみ更新する。
+        // これにより、IMEのコンテキストが保持される。
+        let updatedPages = pages;
+        if (currentRawContent !== currentPage.content) {
+          updatedPages = pages.map((page, index) =>
+            index === currentPageIndex ? { ...page, content: currentRawContent } : page
+          );
+          setPages(updatedPages);
+        }
+
+        // 文字数カウント更新
+        const totalChars = (updatedPages || []).reduce(
+          (sum, page) => sum + htmlContentToPlainText(page.content || '').length,
+          0
+        );
+        setCharCount(totalChars);
+
+        // ページモードなら行数計算などの副次処理のみ行う
+        if (editorMode === 'paged') {
+          const actualLines = calculateActualContentLines();
+          setLineCount(actualLines);
+
+          if (suppressAutoSaveRef.current) {
+            suppressAutoSaveRef.current = false;
+          } else if (isAutoSaveEnabled && user) {
+            setAutoSaveSignal((signal) => signal + 1);
+          }
+
+          const shouldPullFromNext =
+            actualLines < maxLinesPerPage && Boolean(pages[currentPageIndex + 1]?.content?.trim());
+
+          setTimeout(() => {
+            handleAutoPageBreak();
+            if (shouldPullFromNext) {
+              handlePageUnderflow();
+            }
+          }, 100);
+        } else {
+          suppressAutoSaveRef.current = false;
+        }
+        return; // ここで終了
+      }
+
+      // 以下、構造変化が必要な場合のみ実行（マーカー挿入などでDOMをいじる）
       const cursorOffsetBefore = getCursorTextOffset();
       const selection = window.getSelection();
       let markerInserted = false;
@@ -918,9 +991,9 @@ export default function TategakiEditor() {
       }
 
       const rawContent = editorRef.current.innerHTML;
-      const { html: normalizedContent } = normalizeHeadingsInHtml(rawContent, currentPageIndex);
+      const { html: normalizedContent, hasChanges } = normalizeHeadingsInHtml(rawContent, currentPageIndex);
 
-      if (normalizedContent !== rawContent) {
+      if (hasChanges && normalizedContent !== rawContent) {
         editorRef.current.innerHTML = normalizedContent;
       }
 
@@ -1753,6 +1826,55 @@ export default function TategakiEditor() {
 
   const handleContinuousContentChange = (html: string) => {
     const surface = document.querySelector('[data-editor-surface="continuous"]') as HTMLElement | null;
+
+    // Quick check for optimization:
+    // If we can determine that no structural changes (markdown etc) are needed,
+    // we can skip the marker insertion which disrupts IME.
+    if (surface) {
+      const useHtml = surface.innerHTML;
+      const segments = splitContinuousHtml(useHtml);
+
+      let needsStructureUpdate = false;
+      // Check if any segment needs normalization
+      for (let i = 0; i < segments.length; i++) {
+        const { hasChanges } = normalizeHeadingsInHtml(segments[i], i);
+        if (hasChanges) {
+          needsStructureUpdate = true;
+          break;
+        }
+      }
+
+      // Also check if segment count changed (e.g. page break inserted/removed)
+      // This is a bit rough since we don't have previous segment count easily accessible 
+      // without comparing to current pages, but `hasChanges` handles Markdown.
+      // If simply typing text, needsStructureUpdate should be false.
+
+      if (!needsStructureUpdate) {
+        const headingItems: TocHeading[] = [];
+        const normalizedSegments: string[] = [];
+
+        // Just regenerate pages state without marker insertion
+        const nextPages = segments.map((content, index) => {
+          const { html: normalizedHtml, headings } = normalizeHeadingsInHtml(content, index);
+          headingItems.push(...headings);
+          normalizedSegments.push(normalizedHtml);
+          return {
+            id: pages[index]?.id ?? generatePageId(),
+            content: normalizedHtml,
+          };
+        }) || [];
+
+        const safePages = nextPages.length > 0 ? nextPages : [{ id: generatePageId(), content: '' }];
+        setPages(safePages);
+        setContinuousHtml(normalizedSegments.join(CONTINUOUS_BREAK_MARK));
+        setTocHeadings(headingItems);
+
+        // No DOM manipulation via marker
+        return;
+      }
+    }
+
+    // Fallback to full logic if structure update is needed
     const selection = window.getSelection();
     let useHtml = html;
     let markerInserted = false;
@@ -2945,8 +3067,8 @@ export default function TategakiEditor() {
                   color: editorTheme === 'custom' ? editorTextColor : editorTheme === 'dark' ? '#FFFFFF' : '#000000',
                   caretColor: editorTheme === 'custom' ? editorTextColor : editorTheme === 'dark' ? '#FFFFFF' : '#000000'
                 }}
-                onInput={() => {
-                  if (isComposing.current) return;
+                onInput={(e) => {
+                  if (isComposing.current || (e.nativeEvent as any).isComposing) return;
                   handleEditorChange();
                 }}
                 onCompositionStart={() => {

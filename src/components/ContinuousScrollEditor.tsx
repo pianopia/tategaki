@@ -64,9 +64,9 @@ export default function ContinuousScrollEditor({
     }
   }, [isVertical]);
 
-  const handleInput = () => {
+  const handleInput = (event: React.FormEvent<HTMLDivElement>) => {
     if (!editorRef.current) return;
-    if (isComposing.current) return; // Skip updates during composition
+    if (isComposing.current || (event.nativeEvent as any).isComposing) return; // Skip updates during composition
     onChange(editorRef.current.innerHTML);
   };
 
@@ -76,7 +76,9 @@ export default function ContinuousScrollEditor({
 
   const handleCompositionEnd = () => {
     isComposing.current = false;
-    handleInput();
+    if (editorRef.current) {
+      onChange(editorRef.current.innerHTML);
+    }
   };
 
   const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
@@ -96,7 +98,7 @@ export default function ContinuousScrollEditor({
       style={{ touchAction: 'pan-x', backgroundColor }}
       onWheel={handleWheel}
     >
-      <div className="min-h-[60vh]" style={{ width: isVertical ? 'max-content' : '100%' }}>
+      <div className="h-full min-h-[60vh]" style={{ width: isVertical ? 'max-content' : '100%' }}>
         <div
           ref={editorRef}
           contentEditable
@@ -109,7 +111,7 @@ export default function ContinuousScrollEditor({
             color: textColor,
             caretColor: textColor,
             minWidth: isVertical ? '200vw' : '100vw',
-            minHeight: isVertical ? '100vh' : 'auto',
+            height: '100%',
             backgroundColor: backgroundColor,
             // 縦書き: 右側に余裕を持たせる / 横書き: 左側に余裕を持たせる
             padding: isVertical ? '32px 80px 32px 32px' : '32px 32px 32px 80px',
