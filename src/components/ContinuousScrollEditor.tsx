@@ -81,22 +81,28 @@ export default function ContinuousScrollEditor({
     }
   };
 
-  const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+  useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
 
-    event.preventDefault();
-    const horizontalDelta =
-      Math.abs(event.deltaY) > Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
-    container.scrollLeft += horizontalDelta;
-  };
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const horizontalDelta =
+        Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+      container.scrollLeft += horizontalDelta;
+    };
+
+    container.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      container.removeEventListener('wheel', onWheel);
+    };
+  }, []);
 
   return (
     <div
       ref={scrollContainerRef}
       className="flex-1 overflow-x-auto overflow-y-hidden"
       style={{ touchAction: 'pan-x', backgroundColor }}
-      onWheel={handleWheel}
     >
       <div className="h-full min-h-[60vh]" style={{ width: isVertical ? 'max-content' : '100%' }}>
         <div

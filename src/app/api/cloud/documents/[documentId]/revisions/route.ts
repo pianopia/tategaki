@@ -18,7 +18,8 @@ export async function GET(_request: Request, context: RevisionParams) {
     return NextResponse.json({ error: '認証が必要です' }, { status: 401 });
   }
 
-  const documentId = context.params?.documentId;
+  const params = await context.params;
+  const documentId = params?.documentId;
   if (!documentId) {
     return NextResponse.json(
       { error: '不正なパラメータです' },
