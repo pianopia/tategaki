@@ -1,3 +1,10 @@
+gcloud config set project frash-447004
+
+gcloud artifacts repositories create tategaki \
+    --repository-format=docker \
+    --location=asia-east1 \
+    --description="Frontend Docker images"
+
 # ビルド
 docker buildx build -t asia-east1-docker.pkg.dev/frash-447004/tategaki/tategaki:latest --platform linux/amd64 . || exit 1
 
