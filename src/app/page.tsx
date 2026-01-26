@@ -3094,6 +3094,7 @@ export default function TategakiEditor() {
             </>
           ) : (
             <ContinuousScrollEditor
+              ref={editorRef}
               value={continuousHtml || joinPagesForContinuous(pages)}
               isVertical={isVertical}
               editorFontFamily={editorFontFamily}
@@ -3119,557 +3120,557 @@ export default function TategakiEditor() {
             {renderFooterContent('desktop')}
           </div>
         )}
+      </main>
 
-        {/* AI生成プロンプトダイアログ */}
-        {showPromptDialog && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 max-w-lg w-full mx-4 shadow-2xl">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-bold text-gray-800">AI文章生成</h3>
-                <button
-                  onClick={() => setShowPromptDialog(false)}
-                  className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-                >
-                  ✕
-                </button>
-              </div>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    AIへの指示を入力してください
-                  </label>
-                  <textarea
-                    value={promptText}
-                    onChange={(e) => setPromptText(e.target.value)}
-                    className="w-full h-32 p-3 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 text-black"
-                    style={{ color: '#000000' }}
-                    placeholder="例: 続きを書いて、この場面をより詳しく描写して、対話を追加して、など"
-                    autoFocus
-                  />
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <label className="text-sm text-gray-600">モデル:</label>
-                    <select
-                      value={aiModel}
-                      onChange={(e) => setAiModel(e.target.value)}
-                      className="px-2 py-1 text-sm border border-gray-300 rounded text-black"
-                      style={{ color: '#000000' }}
-                    >
-                      <option value="gemini-1.5-flash">Flash (高速)</option>
-                      <option value="gemini-1.5-pro">Pro (高性能)</option>
-                      <option value="gemini-2.0-flash-exp">2.0 Flash (実験版)</option>
-                    </select>
-                  </div>
-
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => setShowPromptDialog(false)}
-                      className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-100"
-                    >
-                      キャンセル
-                    </button>
-                    <button
-                      onClick={generateAIText}
-                      disabled={!promptText.trim() || isGenerating}
-                      className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {isGenerating ? '生成中...' : '生成'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded text-xs text-black">
-                <strong>ヒント:</strong> 現在書いている文章の最後の500文字が文脈として自動的に送信されます。
-              </div>
+      {/* AI生成プロンプトダイアログ */}
+      {showPromptDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-lg w-full mx-4 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-800">AI文章生成</h3>
+              <button
+                onClick={() => setShowPromptDialog(false)}
+                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+              >
+                ✕
+              </button>
             </div>
-          </div>
-        )}
 
-        <JumpToLineDialog
-          isOpen={showJumpDialog}
-          onClose={() => setShowJumpDialog(false)}
-          onJump={handleJumpToLine}
-          maxLines={editorMode === 'paged' ? maxLinesPerPage : undefined}
-        />
-
-        {showAuthDialog && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl text-black">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-bold text-gray-800">{authTitle}</h3>
-                <button
-                  onClick={closeAuthDialog}
-                  className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-                >
-                  ✕
-                </button>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  AIへの指示を入力してください
+                </label>
+                <textarea
+                  value={promptText}
+                  onChange={(e) => setPromptText(e.target.value)}
+                  className="w-full h-32 p-3 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 text-black"
+                  style={{ color: '#000000' }}
+                  placeholder="例: 続きを書いて、この場面をより詳しく描写して、対話を追加して、など"
+                  autoFocus
+                />
               </div>
-              <p className="text-sm text-gray-600 mb-4">{authDescription}</p>
-              <form onSubmit={handleAuthSubmit} className="space-y-3">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">メールアドレス</label>
-                  <input
-                    type="email"
-                    value={authEmail}
-                    onChange={(e) => setAuthEmail(e.target.value)}
-                    required
-                    className="w-full border border-gray-300 rounded px-3 py-2 text-black"
-                    placeholder="user@example.com"
-                  />
-                </div>
-                {isSignupMode && (
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">表示名 (任意)</label>
-                    <input
-                      type="text"
-                      value={authDisplayName}
-                      onChange={(e) => setAuthDisplayName(e.target.value)}
-                      className="w-full border border-gray-300 rounded px-3 py-2 text-black"
-                      placeholder="ペンネーム"
-                    />
-                  </div>
-                )}
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">パスワード</label>
-                  <input
-                    type="password"
-                    value={authPassword}
-                    onChange={(e) => setAuthPassword(e.target.value)}
-                    required
-                    minLength={8}
-                    className="w-full border border-gray-300 rounded px-3 py-2 text-black"
-                    placeholder="半角英数字8文字以上"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">8文字以上のパスワードを設定してください。</p>
-                </div>
-                {isSignupMode && (
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">パスワード（確認）</label>
-                    <input
-                      type="password"
-                      value={authPasswordConfirm}
-                      onChange={(e) => setAuthPasswordConfirm(e.target.value)}
-                      required
-                      minLength={8}
-                      className="w-full border border-gray-300 rounded px-3 py-2 text-black"
-                      placeholder="確認のため同じパスワードを入力"
-                    />
-                  </div>
-                )}
-                {authError && (
-                  <div className="text-xs text-red-600">{authError}</div>
-                )}
-                <div className="text-xs text-gray-500">
-                  入力した情報はクラウド同期目的でのみ利用されます。
-                </div>
-                <div className="text-xs text-right">
-                  <button
-                    type="button"
-                    onClick={handleAuthModeSwitch}
-                    className="text-blue-600 hover:underline"
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <label className="text-sm text-gray-600">モデル:</label>
+                  <select
+                    value={aiModel}
+                    onChange={(e) => setAiModel(e.target.value)}
+                    className="px-2 py-1 text-sm border border-gray-300 rounded text-black"
+                    style={{ color: '#000000' }}
                   >
-                    {authToggleLabel}
-                  </button>
+                    <option value="gemini-1.5-flash">Flash (高速)</option>
+                    <option value="gemini-1.5-pro">Pro (高性能)</option>
+                    <option value="gemini-2.0-flash-exp">2.0 Flash (実験版)</option>
+                  </select>
                 </div>
-                <div className="flex justify-end gap-2 pt-2">
+
+                <div className="flex space-x-2">
                   <button
-                    type="button"
-                    onClick={closeAuthDialog}
+                    onClick={() => setShowPromptDialog(false)}
                     className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-100"
                   >
                     キャンセル
                   </button>
                   <button
-                    type="submit"
-                    disabled={
-                      isAuthLoading ||
-                      !authEmail.trim() ||
-                      authPassword.length < 8 ||
-                      (isSignupMode && authPassword !== authPasswordConfirm)
-                    }
-                    className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-60"
+                    onClick={generateAIText}
+                    disabled={!promptText.trim() || isGenerating}
+                    className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {isAuthLoading ? '送信中…' : authPrimaryLabel}
+                    {isGenerating ? '生成中...' : '生成'}
                   </button>
                 </div>
-              </form>
+              </div>
+            </div>
+
+            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded text-xs text-black">
+              <strong>ヒント:</strong> 現在書いている文章の最後の500文字が文脈として自動的に送信されます。
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-        {showCloudDialog && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 max-w-lg w-full mx-4 shadow-2xl text-black">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-bold text-gray-800">クラウドに保存したテキスト</h3>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={fetchCloudDocuments}
-                    className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-                    title="再読み込み"
-                  >
-                    ↻
-                  </button>
-                  <button
-                    onClick={closeCloudDialog}
-                    className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-                  >
-                    ✕
-                  </button>
-                </div>
+      <JumpToLineDialog
+        isOpen={showJumpDialog}
+        onClose={() => setShowJumpDialog(false)}
+        onJump={handleJumpToLine}
+        maxLines={editorMode === 'paged' ? maxLinesPerPage : undefined}
+      />
+
+      {showAuthDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl text-black">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-800">{authTitle}</h3>
+              <button
+                onClick={closeAuthDialog}
+                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">{authDescription}</p>
+            <form onSubmit={handleAuthSubmit} className="space-y-3">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">メールアドレス</label>
+                <input
+                  type="email"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  required
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-black"
+                  placeholder="user@example.com"
+                />
               </div>
-              <div className="mb-3">
-                <button
-                  onClick={handleCreateNewDocument}
-                  className="w-full border border-green-400 text-green-700 rounded-md px-3 py-2 text-sm font-semibold hover:bg-green-50 transition"
-                >
-                  ＋ 新しいドキュメントを作成
-                </button>
-              </div>
-              {isCloudLoading ? (
-                <div className="text-sm text-gray-600">読み込み中です…</div>
-              ) : cloudDocuments.length === 0 ? (
-                <div className="text-sm text-gray-600">
-                  保存済みのテキストがありません。ヘッダーの☁️ボタンから現在の原稿を保存できます。
-                </div>
-              ) : (
-                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                  {cloudDocuments.map((doc) => (
-                    <div
-                      key={doc.id}
-                      onClick={() => loadDocumentFromCloud(doc.id)}
-                      className={`w-full border rounded px-3 py-2 hover:bg-gray-50 transition cursor-pointer ${activeDocumentId === doc.id ? 'border-blue-400 bg-blue-50' : 'border-gray-200'
-                        }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <div className="font-semibold text-gray-800 text-sm truncate">
-                            {doc.title || DEFAULT_DOCUMENT_TITLE}
-                          </div>
-                          <div className="text-[11px] text-gray-500">
-                            更新: {new Date(doc.updatedAt).toLocaleString('ja-JP')}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              openDocumentPreview(doc.id);
-                            }}
-                            disabled={isPreviewLoading && previewingDocumentId === doc.id}
-                            className="w-7 h-7 flex items-center justify-center border border-blue-300 text-blue-500 rounded text-xs hover:bg-blue-50 disabled:opacity-60"
-                            aria-label="クラウドドキュメントをプレビュー"
-                          >
-                            {isPreviewLoading && previewingDocumentId === doc.id ? (
-                              <span className="text-[11px]">…</span>
-                            ) : (
-                              <FiEye aria-hidden />
-                            )}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              deleteDocumentFromCloud(doc.id);
-                            }}
-                            disabled={deletingDocumentId === doc.id}
-                            className="w-7 h-7 flex items-center justify-center border border-red-400 text-red-500 rounded text-xs hover:bg-red-50 disabled:opacity-60"
-                            aria-label="クラウドドキュメントを削除"
-                          >
-                            {deletingDocumentId === doc.id ? (
-                              <span className="text-[11px]">…</span>
-                            ) : (
-                              <FiTrash aria-hidden />
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+              {isSignupMode && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">表示名 (任意)</label>
+                  <input
+                    type="text"
+                    value={authDisplayName}
+                    onChange={(e) => setAuthDisplayName(e.target.value)}
+                    className="w-full border border-gray-300 rounded px-3 py-2 text-black"
+                    placeholder="ペンネーム"
+                  />
                 </div>
               )}
-            </div>
-          </div>
-        )}
-
-        {previewDocument && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-xl p-6 max-w-2xl w-full mx-4 shadow-2xl text-black">
-              <div className="flex items-center justify-between mb-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">パスワード</label>
+                <input
+                  type="password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  required
+                  minLength={8}
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-black"
+                  placeholder="半角英数字8文字以上"
+                />
+                <p className="text-xs text-gray-500 mt-1">8文字以上のパスワードを設定してください。</p>
+              </div>
+              {isSignupMode && (
                 <div>
-                  <h3 className="text-lg font-bold text-gray-800">プレビュー</h3>
-                  <p className="text-xs text-gray-500">
-                    更新: {new Date(previewDocument.updatedAt).toLocaleString('ja-JP')}
-                  </p>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">パスワード（確認）</label>
+                  <input
+                    type="password"
+                    value={authPasswordConfirm}
+                    onChange={(e) => setAuthPasswordConfirm(e.target.value)}
+                    required
+                    minLength={8}
+                    className="w-full border border-gray-300 rounded px-3 py-2 text-black"
+                    placeholder="確認のため同じパスワードを入力"
+                  />
                 </div>
+              )}
+              {authError && (
+                <div className="text-xs text-red-600">{authError}</div>
+              )}
+              <div className="text-xs text-gray-500">
+                入力した情報はクラウド同期目的でのみ利用されます。
+              </div>
+              <div className="text-xs text-right">
                 <button
-                  onClick={closePreviewDialog}
-                  className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-                  aria-label="プレビューを閉じる"
+                  type="button"
+                  onClick={handleAuthModeSwitch}
+                  className="text-blue-600 hover:underline"
                 >
-                  ✕
+                  {authToggleLabel}
                 </button>
               </div>
-              <div className="mb-4">
-                <h4 className="text-xl font-semibold text-gray-900 break-words">
-                  {previewDocument.title || DEFAULT_DOCUMENT_TITLE}
-                </h4>
-              </div>
-              <div className="border border-gray-200 rounded-lg p-4 max-h-80 overflow-y-auto bg-gray-50 text-sm leading-relaxed whitespace-pre-wrap">
-                {previewDocument.content || '内容が空です。'}
-              </div>
-              <div className="mt-4 flex justify-end">
+              <div className="flex justify-end gap-2 pt-2">
                 <button
-                  onClick={closePreviewDialog}
-                  className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
-                >
-                  閉じる
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ヘルプダイアログ */}
-        {showHelp && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 text-black">
-            <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-bold text-gray-800">ショートカットキー</h3>
-                <button
-                  onClick={() => setShowHelp(false)}
-                  className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-                >
-                  ✕
-                </button>
-              </div>
-
-              <div className="space-y-3 text-sm">
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="font-semibold text-gray-700">キー</div>
-                  <div className="font-semibold text-gray-700">機能</div>
-                </div>
-
-                {editorMode === 'paged' && (
-                  <div className="grid grid-cols-2 gap-2 py-1 border-t border-gray-200">
-                    <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Ctrl + Enter</kbd>
-                    <span>新しいページを作成</span>
-                  </div>
-                )}
-
-                <div className={`grid grid-cols-2 gap-2 py-1${editorMode !== 'paged' ? ' border-t border-gray-200' : ''}`}>
-                  <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Cmd + K</kbd>
-                  <span>AI文章生成</span>
-                </div>
-
-                {editorMode === 'paged' && (
-                  <div className="grid grid-cols-2 gap-2 py-1">
-                    <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Shift + ← / →</kbd>
-                    <span>ページ移動（←次 →前）</span>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-2 py-1">
-                  <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">縦/横ボタン</kbd>
-                  <span>書字モード切替</span>
-                </div>
-              </div>
-
-              <div className="mt-6 p-3 bg-yellow-50 border border-yellow-200 rounded text-xs">
-                <strong>AI生成について:</strong><br />
-                右上の🔑ボタンからGoogle APIキーを設定してください。
-                <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline ml-1">
-                  API キーを取得
-                </a>
-                <div className="mt-2 text-gray-600">
-                  キーはブラウザのLocal Storageに保存され、次回以降も利用できます。
-                </div>
-              </div>
-
-              <div className="mt-4 flex justify-end">
-                <button
-                  onClick={() => setShowHelp(false)}
-                  className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
-                >
-                  閉じる
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* サービス紹介ダイアログ */}
-        {showIntroDialog && (
-          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm px-4 py-6 sm:p-8">
-            <div className="bg-white rounded-2xl p-6 sm:p-8 max-w-2xl w-full shadow-2xl border border-gray-100 animate-in slide-in-from-bottom-4 duration-500 max-h-[90vh] overflow-y-auto">
-              {/* ヘッダー */}
-              <div className="text-center mb-8">
-                <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
-                  <span className="text-white text-2xl font-bold">縦</span>
-                </div>
-                <h2 className="text-3xl font-bold text-gray-800 mb-2">tategaki へようこそ</h2>
-                <p className="text-lg text-gray-600">AI搭載の縦書きエディタ</p>
-              </div>
-
-              {/* 機能紹介 */}
-              <div className="grid md:grid-cols-2 gap-6 mb-6">
-                <div className="flex items-start space-x-3">
-                  <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
-                    <span className="text-blue-600 text-lg">✍️</span>
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-gray-800 mb-1">美しい縦書き表示</h3>
-                    <p className="text-sm text-gray-600">日本語文章に最適な縦書きレイアウトで、没入感のある執筆体験を提供</p>
-                  </div>
-                </div>
-
-                <div className="flex items-start space-x-3">
-                  <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
-                    <span className="text-purple-600 text-lg">🤖</span>
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-gray-800 mb-1">AI執筆支援</h3>
-                    <p className="text-sm text-gray-600">Google Gemini搭載で続きの文章生成、対話作成、描写強化をサポート</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* アクションボタン */}
-              <div className="flex flex-col sm:flex-row gap-3 mb-4">
-                <button
-                  onClick={closeIntroDialog}
-                  className="flex-1 bg-gradient-to-r from-blue-500 to-purple-600 text-white px-6 py-3 rounded-xl font-semibold hover:from-blue-600 hover:to-purple-700 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
-                >
-                  さっそく執筆を始める
-                </button>
-                <button
-                  onClick={() => {
-                    setApiKeyInput(googleApiKey);
-                    setRevealApiKey(false);
-                    setShowApiKeyDialog(true);
-                  }}
-                  className="flex-1 border border-gray-300 text-gray-800 px-6 py-3 rounded-xl font-semibold hover:bg-gray-50 transition-all duration-200"
-                >
-                  🔑 APIキーを設定
-                </button>
-              </div>
-
-              {/* フッター */}
-              <div className="text-center space-y-1">
-                <p className="text-sm text-gray-600 flex flex-col sm:flex-row items-center justify-center gap-2">
-                  <span>ログインするとクラウド保存が可能です。</span>
-                  <button
-                    type="button"
-                    onClick={() => openAuthDialog('login')}
-                    className="text-blue-600 underline underline-offset-2 hover:text-blue-700"
-                  >
-                    ログイン・アカウント作成はこちら
-                  </button>
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* APIキー設定ダイアログ */}
-        {showApiKeyDialog && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl text-black">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-bold text-gray-800">Google APIキー設定</h3>
-                <button
-                  onClick={() => setShowApiKeyDialog(false)}
-                  className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
-                  aria-label="閉じる"
-                >
-                  ✕
-                </button>
-              </div>
-              <div className="space-y-3">
-                <p className="text-sm text-gray-700">
-                  Google Gemini を利用するための API キーを入力してください。
-                  <a
-                    href="https://aistudio.google.com/app/apikey"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-600 underline ml-1"
-                  >
-                    キーを取得
-                  </a>
-                </p>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">APIキー</label>
-                  <div className="flex gap-2">
-                    <input
-                      type={revealApiKey ? 'text' : 'password'}
-                      value={apiKeyInput}
-                      onChange={(e) => setApiKeyInput(e.target.value)}
-                      className="flex-1 p-2 border border-gray-300 rounded text-black"
-                      placeholder="AIza..."
-                      autoFocus
-                    />
-                    <button
-                      onClick={() => setRevealApiKey(v => !v)}
-                      className="px-2 border border-gray-300 rounded text-xs text-gray-700 hover:bg-gray-100"
-                      title={revealApiKey ? '非表示' : '表示'}
-                    >
-                      {revealApiKey ? '🙈' : '👁️'}
-                    </button>
-                  </div>
-                  {googleApiKey && (
-                    <div className="mt-1 text-xs text-gray-600">現在、保存済みのキーが設定されています。</div>
-                  )}
-                </div>
-                <div className="text-xs text-gray-600 bg-blue-50 border border-blue-200 p-2 rounded">
-                  キーはこのブラウザの Local Storage にのみ保存され、サーバーには保存されません。
-                </div>
-              </div>
-              <div className="mt-4 flex justify-end gap-2">
-                <button
-                  onClick={() => setShowApiKeyDialog(false)}
+                  type="button"
+                  onClick={closeAuthDialog}
                   className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-100"
                 >
                   キャンセル
                 </button>
                 <button
-                  onClick={saveApiKey}
-                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                  type="submit"
+                  disabled={
+                    isAuthLoading ||
+                    !authEmail.trim() ||
+                    authPassword.length < 8 ||
+                    (isSignupMode && authPassword !== authPasswordConfirm)
+                  }
+                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-60"
                 >
-                  保存
+                  {isAuthLoading ? '送信中…' : authPrimaryLabel}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showCloudDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-lg w-full mx-4 shadow-2xl text-black">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-800">クラウドに保存したテキスト</h3>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={fetchCloudDocuments}
+                  className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+                  title="再読み込み"
+                >
+                  ↻
+                </button>
+                <button
+                  onClick={closeCloudDialog}
+                  className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+                >
+                  ✕
                 </button>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* 設定ダイアログ */}
-        <PreferencesDialog
-          isOpen={showPreferencesDialog}
-          onClose={closeSettingsDialog}
-          onPreferencesChange={handlePreferencesChange}
-        />
-
-        {cloudStatus && (
-          <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2">
-            <div
-              className={`min-w-[220px] max-w-sm rounded-lg px-4 py-3 text-sm shadow-xl border ${cloudStatus.tone === 'success'
-                ? 'bg-green-50 text-green-800 border-green-200'
-                : 'bg-red-50 text-red-800 border-red-200'
-                }`}
-            >
-              <div className="font-semibold text-xs mb-1">
-                {cloudStatus.tone === 'success' ? 'クラウド保存' : 'エラー'}
+            <div className="mb-3">
+              <button
+                onClick={handleCreateNewDocument}
+                className="w-full border border-green-400 text-green-700 rounded-md px-3 py-2 text-sm font-semibold hover:bg-green-50 transition"
+              >
+                ＋ 新しいドキュメントを作成
+              </button>
+            </div>
+            {isCloudLoading ? (
+              <div className="text-sm text-gray-600">読み込み中です…</div>
+            ) : cloudDocuments.length === 0 ? (
+              <div className="text-sm text-gray-600">
+                保存済みのテキストがありません。ヘッダーの☁️ボタンから現在の原稿を保存できます。
               </div>
-              <div>{cloudStatus.message}</div>
+            ) : (
+              <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                {cloudDocuments.map((doc) => (
+                  <div
+                    key={doc.id}
+                    onClick={() => loadDocumentFromCloud(doc.id)}
+                    className={`w-full border rounded px-3 py-2 hover:bg-gray-50 transition cursor-pointer ${activeDocumentId === doc.id ? 'border-blue-400 bg-blue-50' : 'border-gray-200'
+                      }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-gray-800 text-sm truncate">
+                          {doc.title || DEFAULT_DOCUMENT_TITLE}
+                        </div>
+                        <div className="text-[11px] text-gray-500">
+                          更新: {new Date(doc.updatedAt).toLocaleString('ja-JP')}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openDocumentPreview(doc.id);
+                          }}
+                          disabled={isPreviewLoading && previewingDocumentId === doc.id}
+                          className="w-7 h-7 flex items-center justify-center border border-blue-300 text-blue-500 rounded text-xs hover:bg-blue-50 disabled:opacity-60"
+                          aria-label="クラウドドキュメントをプレビュー"
+                        >
+                          {isPreviewLoading && previewingDocumentId === doc.id ? (
+                            <span className="text-[11px]">…</span>
+                          ) : (
+                            <FiEye aria-hidden />
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            deleteDocumentFromCloud(doc.id);
+                          }}
+                          disabled={deletingDocumentId === doc.id}
+                          className="w-7 h-7 flex items-center justify-center border border-red-400 text-red-500 rounded text-xs hover:bg-red-50 disabled:opacity-60"
+                          aria-label="クラウドドキュメントを削除"
+                        >
+                          {deletingDocumentId === doc.id ? (
+                            <span className="text-[11px]">…</span>
+                          ) : (
+                            <FiTrash aria-hidden />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {previewDocument && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-2xl w-full mx-4 shadow-2xl text-black">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-bold text-gray-800">プレビュー</h3>
+                <p className="text-xs text-gray-500">
+                  更新: {new Date(previewDocument.updatedAt).toLocaleString('ja-JP')}
+                </p>
+              </div>
+              <button
+                onClick={closePreviewDialog}
+                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+                aria-label="プレビューを閉じる"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="mb-4">
+              <h4 className="text-xl font-semibold text-gray-900 break-words">
+                {previewDocument.title || DEFAULT_DOCUMENT_TITLE}
+              </h4>
+            </div>
+            <div className="border border-gray-200 rounded-lg p-4 max-h-80 overflow-y-auto bg-gray-50 text-sm leading-relaxed whitespace-pre-wrap">
+              {previewDocument.content || '内容が空です。'}
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={closePreviewDialog}
+                className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+              >
+                閉じる
+              </button>
             </div>
           </div>
-        )}
-      </main>
+        </div>
+      )}
+
+      {/* ヘルプダイアログ */}
+      {showHelp && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 text-black">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-800">ショートカットキー</h3>
+              <button
+                onClick={() => setShowHelp(false)}
+                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 text-sm">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="font-semibold text-gray-700">キー</div>
+                <div className="font-semibold text-gray-700">機能</div>
+              </div>
+
+              {editorMode === 'paged' && (
+                <div className="grid grid-cols-2 gap-2 py-1 border-t border-gray-200">
+                  <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Ctrl + Enter</kbd>
+                  <span>新しいページを作成</span>
+                </div>
+              )}
+
+              <div className={`grid grid-cols-2 gap-2 py-1${editorMode !== 'paged' ? ' border-t border-gray-200' : ''}`}>
+                <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Cmd + K</kbd>
+                <span>AI文章生成</span>
+              </div>
+
+              {editorMode === 'paged' && (
+                <div className="grid grid-cols-2 gap-2 py-1">
+                  <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Shift + ← / →</kbd>
+                  <span>ページ移動（←次 →前）</span>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-2 py-1">
+                <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">縦/横ボタン</kbd>
+                <span>書字モード切替</span>
+              </div>
+            </div>
+
+            <div className="mt-6 p-3 bg-yellow-50 border border-yellow-200 rounded text-xs">
+              <strong>AI生成について:</strong><br />
+              右上の🔑ボタンからGoogle APIキーを設定してください。
+              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline ml-1">
+                API キーを取得
+              </a>
+              <div className="mt-2 text-gray-600">
+                キーはブラウザのLocal Storageに保存され、次回以降も利用できます。
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={() => setShowHelp(false)}
+                className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
+              >
+                閉じる
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* サービス紹介ダイアログ */}
+      {showIntroDialog && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm px-4 py-6 sm:p-8">
+          <div className="bg-white rounded-2xl p-6 sm:p-8 max-w-2xl w-full shadow-2xl border border-gray-100 animate-in slide-in-from-bottom-4 duration-500 max-h-[90vh] overflow-y-auto">
+            {/* ヘッダー */}
+            <div className="text-center mb-8">
+              <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
+                <span className="text-white text-2xl font-bold">縦</span>
+              </div>
+              <h2 className="text-3xl font-bold text-gray-800 mb-2">tategaki へようこそ</h2>
+              <p className="text-lg text-gray-600">AI搭載の縦書きエディタ</p>
+            </div>
+
+            {/* 機能紹介 */}
+            <div className="grid md:grid-cols-2 gap-6 mb-6">
+              <div className="flex items-start space-x-3">
+                <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
+                  <span className="text-blue-600 text-lg">✍️</span>
+                </div>
+                <div>
+                  <h3 className="font-semibold text-gray-800 mb-1">美しい縦書き表示</h3>
+                  <p className="text-sm text-gray-600">日本語文章に最適な縦書きレイアウトで、没入感のある執筆体験を提供</p>
+                </div>
+              </div>
+
+              <div className="flex items-start space-x-3">
+                <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
+                  <span className="text-purple-600 text-lg">🤖</span>
+                </div>
+                <div>
+                  <h3 className="font-semibold text-gray-800 mb-1">AI執筆支援</h3>
+                  <p className="text-sm text-gray-600">Google Gemini搭載で続きの文章生成、対話作成、描写強化をサポート</p>
+                </div>
+              </div>
+            </div>
+
+            {/* アクションボタン */}
+            <div className="flex flex-col sm:flex-row gap-3 mb-4">
+              <button
+                onClick={closeIntroDialog}
+                className="flex-1 bg-gradient-to-r from-blue-500 to-purple-600 text-white px-6 py-3 rounded-xl font-semibold hover:from-blue-600 hover:to-purple-700 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
+              >
+                さっそく執筆を始める
+              </button>
+              <button
+                onClick={() => {
+                  setApiKeyInput(googleApiKey);
+                  setRevealApiKey(false);
+                  setShowApiKeyDialog(true);
+                }}
+                className="flex-1 border border-gray-300 text-gray-800 px-6 py-3 rounded-xl font-semibold hover:bg-gray-50 transition-all duration-200"
+              >
+                🔑 APIキーを設定
+              </button>
+            </div>
+
+            {/* フッター */}
+            <div className="text-center space-y-1">
+              <p className="text-sm text-gray-600 flex flex-col sm:flex-row items-center justify-center gap-2">
+                <span>ログインするとクラウド保存が可能です。</span>
+                <button
+                  type="button"
+                  onClick={() => openAuthDialog('login')}
+                  className="text-blue-600 underline underline-offset-2 hover:text-blue-700"
+                >
+                  ログイン・アカウント作成はこちら
+                </button>
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* APIキー設定ダイアログ */}
+      {showApiKeyDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl text-black">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-800">Google APIキー設定</h3>
+              <button
+                onClick={() => setShowApiKeyDialog(false)}
+                className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100"
+                aria-label="閉じる"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="space-y-3">
+              <p className="text-sm text-gray-700">
+                Google Gemini を利用するための API キーを入力してください。
+                <a
+                  href="https://aistudio.google.com/app/apikey"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 underline ml-1"
+                >
+                  キーを取得
+                </a>
+              </p>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">APIキー</label>
+                <div className="flex gap-2">
+                  <input
+                    type={revealApiKey ? 'text' : 'password'}
+                    value={apiKeyInput}
+                    onChange={(e) => setApiKeyInput(e.target.value)}
+                    className="flex-1 p-2 border border-gray-300 rounded text-black"
+                    placeholder="AIza..."
+                    autoFocus
+                  />
+                  <button
+                    onClick={() => setRevealApiKey(v => !v)}
+                    className="px-2 border border-gray-300 rounded text-xs text-gray-700 hover:bg-gray-100"
+                    title={revealApiKey ? '非表示' : '表示'}
+                  >
+                    {revealApiKey ? '🙈' : '👁️'}
+                  </button>
+                </div>
+                {googleApiKey && (
+                  <div className="mt-1 text-xs text-gray-600">現在、保存済みのキーが設定されています。</div>
+                )}
+              </div>
+              <div className="text-xs text-gray-600 bg-blue-50 border border-blue-200 p-2 rounded">
+                キーはこのブラウザの Local Storage にのみ保存され、サーバーには保存されません。
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setShowApiKeyDialog(false)}
+                className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-100"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={saveApiKey}
+                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 設定ダイアログ */}
+      <PreferencesDialog
+        isOpen={showPreferencesDialog}
+        onClose={closeSettingsDialog}
+        onPreferencesChange={handlePreferencesChange}
+      />
+
+      {cloudStatus && (
+        <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2">
+          <div
+            className={`min-w-[220px] max-w-sm rounded-lg px-4 py-3 text-sm shadow-xl border ${cloudStatus.tone === 'success'
+              ? 'bg-green-50 text-green-800 border-green-200'
+              : 'bg-red-50 text-red-800 border-red-200'
+              }`}
+          >
+            <div className="font-semibold text-xs mb-1">
+              {cloudStatus.tone === 'success' ? 'クラウド保存' : 'エラー'}
+            </div>
+            <div>{cloudStatus.message}</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
