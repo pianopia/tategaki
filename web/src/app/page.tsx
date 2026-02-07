@@ -2875,8 +2875,11 @@ export default function TategakiEditor() {
           <Link href="/privacy" className="hover:text-gray-900 hover:underline underline-offset-2">
             プライバシーポリシー
           </Link>
-          <Link href="/legal" className="hover:text-gray-900 hover:underline underline-offset-2">
+          {/* <Link href="/legal" className="hover:text-gray-900 hover:underline underline-offset-2">
             特定商取引法に基づく表記
+          </Link> */}
+          <Link href="/requests" className="hover:text-gray-900 hover:underline underline-offset-2">
+            要望を送る
           </Link>
         </div>
       </div>
@@ -3476,9 +3479,9 @@ export default function TategakiEditor() {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-2 py-1">
-                <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">縦/横ボタン</kbd>
-                <span>書字モード切替</span>
+              <div className={`grid grid-cols-2 gap-2 py-1${editorMode !== 'paged' ? ' border-t border-gray-200' : ''}`}>
+                <kbd className="bg-gray-100 px-2 py-1 rounded text-xs">Cmd + G</kbd>
+                <span>行数指定で移動</span>
               </div>
             </div>
 

@@ -89,9 +89,31 @@ export const userPreferences = sqliteTable(
   })
 );
 
+export const featureRequests = sqliteTable(
+  'feature_requests',
+  {
+    id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+    userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
+    email: text('email').notNull(),
+    name: text('name'),
+    message: text('message').notNull(),
+    status: text('status').notNull().default('new'),
+    createdAt: integer('created_at', { mode: 'number' })
+      .notNull()
+      .default(sql`(unixepoch('now') * 1000)`),
+  },
+  (table) => ({
+    createdIdx: index('idx_feature_requests_created').on(table.createdAt),
+    userIdx: index('idx_feature_requests_user').on(table.userId),
+    statusIdx: index('idx_feature_requests_status').on(table.status),
+  })
+);
+
 export type User = typeof users.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type Document = typeof documents.$inferSelect;
 export type DocumentRevision = typeof documentRevisions.$inferSelect;
 export type UserPreference = typeof userPreferences.$inferSelect;
 export type UserPreferenceInsert = typeof userPreferences.$inferInsert;
+export type FeatureRequest = typeof featureRequests.$inferSelect;
+export type FeatureRequestInsert = typeof featureRequests.$inferInsert;
