@@ -27,6 +27,7 @@ type CloudDocumentSummary = {
 };
 
 type AuthMode = 'login' | 'signup';
+type SaveOrigin = 'manual' | 'auto';
 type TocHeading = {
   id: string;
   title: string;
@@ -295,6 +296,7 @@ export default function TategakiEditor() {
   const [showCloudDialog, setShowCloudDialog] = useState(false);
   const [isCloudLoading, setIsCloudLoading] = useState(false);
   const [isCloudSaving, setIsCloudSaving] = useState(false);
+  const [isAutoSaving, setIsAutoSaving] = useState(false);
   const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
   const [cloudStatus, setCloudStatus] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
   const [isAutoSaveEnabled, setIsAutoSaveEnabled] = useState(false);
@@ -326,7 +328,7 @@ export default function TategakiEditor() {
   const [previewingDocumentId, setPreviewingDocumentId] = useState<string | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const saveDocumentToCloudRef = useRef<(() => Promise<void>) | null>(null);
+  const saveDocumentToCloudRef = useRef<((origin?: SaveOrigin) => Promise<void>) | null>(null);
   const lastRevisionSavedAtRef = useRef<number | null>(null);
   const suppressAutoSaveRef = useRef(false);
   const isComposing = useRef(false);
@@ -1868,6 +1870,11 @@ export default function TategakiEditor() {
         setPages(safePages);
         setContinuousHtml(normalizedSegments.join(CONTINUOUS_BREAK_MARK));
         setTocHeadings(headingItems);
+        if (suppressAutoSaveRef.current) {
+          suppressAutoSaveRef.current = false;
+        } else if (isAutoSaveEnabled && user) {
+          setAutoSaveSignal((signal) => signal + 1);
+        }
 
         // No DOM manipulation via marker
         return;
@@ -1900,6 +1907,11 @@ export default function TategakiEditor() {
       setPages([{ id: generatePageId(), content: '' }]);
       setContinuousHtml('');
       setTocHeadings([]);
+      if (suppressAutoSaveRef.current) {
+        suppressAutoSaveRef.current = false;
+      } else if (isAutoSaveEnabled && user) {
+        setAutoSaveSignal((signal) => signal + 1);
+      }
       return;
     }
 
@@ -1920,6 +1932,11 @@ export default function TategakiEditor() {
     setPages(safePages);
     setContinuousHtml(normalizedSegments.join(CONTINUOUS_BREAK_MARK));
     setTocHeadings(headingItems);
+    if (suppressAutoSaveRef.current) {
+      suppressAutoSaveRef.current = false;
+    } else if (isAutoSaveEnabled && user) {
+      setAutoSaveSignal((signal) => signal + 1);
+    }
 
     if (markerInserted) {
       setTimeout(() => {
@@ -1945,13 +1962,17 @@ export default function TategakiEditor() {
     }
   };
 
-  const saveDocumentToCloud = async () => {
+  const saveDocumentToCloud = async (origin: SaveOrigin = 'manual') => {
     if (!user) {
       openAuthDialog('login');
       return;
     }
     if (isCloudSaving) return;
 
+    const isAutoTriggered = origin === 'auto';
+    if (isAutoTriggered) {
+      setIsAutoSaving(true);
+    }
     setIsCloudSaving(true);
     try {
       const now = Date.now();
@@ -2000,6 +2021,9 @@ export default function TategakiEditor() {
       });
     } finally {
       setIsCloudSaving(false);
+      if (isAutoTriggered) {
+        setIsAutoSaving(false);
+      }
     }
   };
   saveDocumentToCloudRef.current = saveDocumentToCloud;
@@ -2347,7 +2371,7 @@ export default function TategakiEditor() {
     if (!isAutoSaveEnabled || !user) return;
     if (autoSaveSignal === 0) return;
     const timer = window.setTimeout(() => {
-      saveDocumentToCloudRef.current?.();
+      saveDocumentToCloudRef.current?.('auto');
     }, 1500);
     return () => clearTimeout(timer);
   }, [autoSaveSignal, isAutoSaveEnabled, user]);
@@ -2661,19 +2685,28 @@ export default function TategakiEditor() {
           </div>
 
           <div className="w-px h-4 bg-gray-300 mx-1"></div>
-          <label
-            className={`flex items-center gap-1 border rounded px-2 py-1 text-[10px] ${isAutoSaveEnabled ? 'border-blue-400 text-blue-700' : 'border-gray-300 text-gray-600'
-              }`}
-            title={user ? '一定時間入力が止まると自動保存します' : 'ログインすると自動保存を利用できます'}
-          >
-            <input
-              type="checkbox"
-              checked={isAutoSaveEnabled}
-              onChange={handleAutoSaveToggle}
-              className="h-3 w-3 accent-blue-500"
-            />
-            <span>自動保存</span>
-          </label>
+          <div className="flex items-center gap-1">
+            <label
+              className={`flex items-center gap-1 border rounded px-2 py-1 text-[10px] ${isAutoSaveEnabled ? 'border-blue-400 text-blue-700' : 'border-gray-300 text-gray-600'
+                }`}
+              title={user ? '一定時間入力が止まると自動保存します' : 'ログインすると自動保存を利用できます'}
+            >
+              <input
+                type="checkbox"
+                checked={isAutoSaveEnabled}
+                onChange={handleAutoSaveToggle}
+                className="h-3 w-3 accent-blue-500"
+              />
+              <span>自動保存</span>
+            </label>
+            {isAutoSaving && (
+              <span
+                className="inline-block h-3 w-3 rounded-full border border-blue-500 border-r-transparent animate-spin"
+                aria-label="自動保存中"
+                title="自動保存中"
+              />
+            )}
+          </div>
 
           {user ? (
             <>
@@ -2685,7 +2718,7 @@ export default function TategakiEditor() {
                 エクスポート
               </button>
               <button
-                onClick={saveDocumentToCloud}
+                onClick={() => saveDocumentToCloud('manual')}
                 className="w-6 h-6 border border-gray-400 text-gray-700 rounded text-xs hover:bg-gray-100 disabled:opacity-60"
                 title="クラウドに保存"
                 disabled={isCloudSaving}
