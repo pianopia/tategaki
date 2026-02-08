@@ -82,8 +82,9 @@ const ContinuousScrollEditor = React.forwardRef<HTMLDivElement, ContinuousScroll
           }
         }, 0);
       } else {
-        // For horizontal mode, scroll right by 80px to show the left padding
-        scrollContainerRef.current.scrollLeft = 80;
+        // For horizontal mode, start from the top-left reading position
+        scrollContainerRef.current.scrollLeft = 0;
+        scrollContainerRef.current.scrollTop = 0;
       }
     }, [isVertical]);
 
@@ -106,7 +107,7 @@ const ContinuousScrollEditor = React.forwardRef<HTMLDivElement, ContinuousScroll
 
     useEffect(() => {
       const container = scrollContainerRef.current;
-      if (!container) return;
+      if (!container || !isVertical) return;
 
       const onWheel = (e: WheelEvent) => {
         e.preventDefault();
@@ -119,15 +120,22 @@ const ContinuousScrollEditor = React.forwardRef<HTMLDivElement, ContinuousScroll
       return () => {
         container.removeEventListener('wheel', onWheel);
       };
-    }, []);
+    }, [isVertical]);
 
     return (
       <div
         ref={scrollContainerRef}
-        className="flex-1 overflow-x-auto overflow-y-hidden"
-        style={{ touchAction: 'pan-x', backgroundColor }}
+        className={`h-full w-full min-h-0 ${isVertical ? 'overflow-x-auto overflow-y-hidden' : 'overflow-y-auto overflow-x-hidden'}`}
+        style={{ touchAction: isVertical ? 'pan-x' : 'pan-y', backgroundColor }}
+        data-editor-scroll-container="continuous"
       >
-        <div className="h-full min-h-[60vh]" style={{ width: isVertical ? 'max-content' : '100%' }}>
+        <div
+          className="min-h-full"
+          style={{
+            width: isVertical ? 'max-content' : '100%',
+            height: isVertical ? '100%' : 'auto',
+          }}
+        >
           <div
             ref={internalRef}
             contentEditable
@@ -139,8 +147,8 @@ const ContinuousScrollEditor = React.forwardRef<HTMLDivElement, ContinuousScroll
               fontFamily: editorFontFamily,
               color: textColor,
               caretColor: textColor,
-              minWidth: isVertical ? '200vw' : '100vw',
-              height: '100%',
+              minWidth: isVertical ? '200vw' : '100%',
+              height: isVertical ? '100%' : 'auto',
               backgroundColor: backgroundColor,
               // 縦書き: 右側に余裕を持たせる / 横書き: 左側に余裕を持たせる
               padding: isVertical ? '32px 80px 32px 32px' : '32px 32px 32px 80px',

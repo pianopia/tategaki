@@ -680,7 +680,7 @@ export default function TategakiEditor() {
       // したがって、ContinuousScrollEditorにrefを渡すか、
       // DOMクエリで要素を探す必要がある。
 
-      const scrollEditor = document.querySelector('.overflow-x-auto .min-h-\\[70vh\\]');
+      const scrollEditor = document.querySelector('[data-editor-surface="continuous"]');
       if (!scrollEditor) return;
 
       // 行位置を特定するためのロジック（Pageモードと同様）
@@ -722,7 +722,7 @@ export default function TategakiEditor() {
         const targetNodeInfo = nodeMap.get(targetPos);
 
         // スクロールコンテナを取得
-        const container = scrollEditor.parentElement?.parentElement;
+        const container = (scrollEditor as HTMLElement).closest('[data-editor-scroll-container="continuous"]');
         if (container) {
           if (isVertical) {
             // 縦書きの場合、右から左へスクロール。
@@ -3012,7 +3012,7 @@ export default function TategakiEditor() {
 
         {/* エディタエリア（画面の95%） */}
         <div
-          className="flex-1 overflow-hidden relative"
+          className="flex-1 min-h-0 overflow-hidden relative"
           style={{
             backgroundColor: editorTheme === 'custom' ? editorBackgroundColor : editorTheme === 'dark' ? '#000000' : '#FFFFFF'
           }}
