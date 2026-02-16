@@ -40,6 +40,7 @@ const DEFAULT_DOCUMENT_TITLE = '無題';
 const DEFAULT_MAX_LINES_PER_PAGE = 40;
 const DEFAULT_REVISION_INTERVAL_MINUTES = 10;
 const DEFAULT_EDITOR_MODE: 'paged' | 'continuous' = 'paged';
+const REVISION_SLIDER_DRAG_THRESHOLD = 4;
 const CONTINUOUS_BREAK_MARK = '<div data-tategaki-break="true"></div>';
 const FONT_PRESETS = {
   classic: {
@@ -332,6 +333,10 @@ export default function TategakiEditor() {
   const lastRevisionSavedAtRef = useRef<number | null>(null);
   const suppressAutoSaveRef = useRef(false);
   const isComposing = useRef(false);
+  const revisionSliderDragStartXRef = useRef<number | null>(null);
+  const revisionSliderDragStartIndexRef = useRef<number | null>(null);
+  const revisionSliderPendingIndexRef = useRef(0);
+  const isRevisionSliderDraggingRef = useRef(false);
   const [isMobileView, setIsMobileView] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [showPreferencesDialog, setShowPreferencesDialog] = useState(false);
@@ -1820,6 +1825,48 @@ export default function TategakiEditor() {
     if (!revisionTimeline.length) return;
     const clamped = Math.min(Math.max(Number(index), 0), revisionTimeline.length - 1);
     setRevisionSliderIndex(clamped);
+    revisionSliderPendingIndexRef.current = clamped;
+
+    if (revisionSliderDragStartXRef.current === null) {
+      const revision = revisionTimeline[clamped];
+      if (revision) {
+        applyRevisionToEditor(revision);
+      }
+    }
+  };
+
+  const handleRevisionSliderPointerDown = (event: React.PointerEvent<HTMLInputElement>) => {
+    revisionSliderDragStartXRef.current = event.clientX;
+    revisionSliderDragStartIndexRef.current = revisionSliderIndex;
+    revisionSliderPendingIndexRef.current = revisionSliderIndex;
+    isRevisionSliderDraggingRef.current = false;
+  };
+
+  const handleRevisionSliderPointerMove = (event: React.PointerEvent<HTMLInputElement>) => {
+    if (revisionSliderDragStartXRef.current === null) return;
+    if (Math.abs(event.clientX - revisionSliderDragStartXRef.current) >= REVISION_SLIDER_DRAG_THRESHOLD) {
+      isRevisionSliderDraggingRef.current = true;
+    }
+  };
+
+  const handleRevisionSliderPointerUp = () => {
+    if (!revisionTimeline.length) return;
+
+    const dragged = isRevisionSliderDraggingRef.current;
+    const startIndex = revisionSliderDragStartIndexRef.current;
+
+    revisionSliderDragStartXRef.current = null;
+    revisionSliderDragStartIndexRef.current = null;
+    isRevisionSliderDraggingRef.current = false;
+
+    if (!dragged) {
+      if (typeof startIndex === 'number') {
+        setRevisionSliderIndex(startIndex);
+      }
+      return;
+    }
+
+    const clamped = Math.min(Math.max(Number(revisionSliderPendingIndexRef.current), 0), revisionTimeline.length - 1);
     const revision = revisionTimeline[clamped];
     if (revision) {
       applyRevisionToEditor(revision);
@@ -2402,6 +2449,10 @@ export default function TategakiEditor() {
     }
   }, [isMobileView]);
 
+  useEffect(() => {
+    revisionSliderPendingIndexRef.current = revisionSliderIndex;
+  }, [revisionSliderIndex]);
+
   // 紹介ダイアログを閉じる処理
   const closeIntroDialog = () => {
     setShowIntroDialog(false);
@@ -2839,11 +2890,6 @@ export default function TategakiEditor() {
               ☁️ {activeCloudDocument ? activeCloudDocument.title : documentTitle || 'クラウド未保存'}
             </span>
           )}
-          {cloudStatus && (
-            <span className={cloudStatus.tone === 'success' ? 'text-green-600' : 'text-red-600'}>
-              {cloudStatus.message}
-            </span>
-          )}
         </div>
 
         {hasRevisions && (
@@ -2891,6 +2937,10 @@ export default function TategakiEditor() {
                 value={safeRevisionIndex}
                 disabled={revisionTimeline.length <= 1 || isRevisionTimelineLoading}
                 onChange={(event) => handleRevisionSliderChange(Number(event.target.value))}
+                onPointerDown={handleRevisionSliderPointerDown}
+                onPointerMove={handleRevisionSliderPointerMove}
+                onPointerUp={handleRevisionSliderPointerUp}
+                onPointerCancel={handleRevisionSliderPointerUp}
                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                 aria-label="リビジョンタイムライン"
               />

@@ -2,8 +2,12 @@ import type { Metadata } from "next";
 import "./globals.css";
 import Script from "next/script";
 
+const baseUrl = process.env.VERCEL_URL
+  ? `https://${process.env.VERCEL_URL}`
+  : "https://tategaki.vercel.app";
+
 export const metadata: Metadata = {
-  metadataBase: new URL("https://tategaki.vercel.app"),
+  metadataBase: new URL(baseUrl),
   title: "tategaki - 縦書きエディタ",
   description: "縦書き表示とAI執筆支援機能を搭載した無料の小説エディタ。文字数カウント、改ページ機能、テキスト出力対応。小説家・ライター・同人作家の創作活動を支援します。",
   icons: {
@@ -20,7 +24,7 @@ export const metadata: Metadata = {
   },
   keywords: [
     "縦書き小説エディタ", "縦書きエディタ", "AI執筆支援", "小説執筆", "文芸創作",
-    "縦書きアプリ", "縦書きソフト", "WEB縦書き",
+    "縦書きアプリ", "縦書きソフト", "WEB縦書き", "ai エディタ", "AI エディタ",
     "小説家", "ライター", "同人小説", "創作ツール", "無料エディタ",
     "文章作成", "テキストエディタ", "執筆環境", "文字数カウント",
     "改ページ機能", "Gemini AI", "文章生成", "執筆支援AI",
