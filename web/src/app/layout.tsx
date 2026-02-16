@@ -4,7 +4,7 @@ import Script from "next/script";
 
 const baseUrl = process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}`
-  : "https://tategaki.vercel.app";
+  : "https://tategaki.jp";
 
 export const metadata: Metadata = {
   metadataBase: new URL(baseUrl),
@@ -41,7 +41,7 @@ export const metadata: Metadata = {
     type: "website",
     locale: "ja_JP",
     siteName: "tategaki",
-    url: "https://tategaki.vercel.app",
+    url: "https://tategaki.jp",
     images: [
       {
         url: "/editor_ogp.png",
@@ -59,7 +59,7 @@ export const metadata: Metadata = {
     images: ["/editor_ogp.png"],
   },
   alternates: {
-    canonical: "https://tategaki.vercel.app",
+    canonical: "https://tategaki.jp",
   },
   other: {
     "msapplication-TileColor": "#ffffff",
@@ -79,7 +79,7 @@ export default function RootLayout({
     "applicationCategory": "Writing Software",
     "operatingSystem": "Web Browser",
     "description": "縦書き表示とAI執筆支援機能を搭載した無料の小説エディタ。原稿用紙風のレイアウトで集中して創作できます。",
-    "url": "https://tategaki.vercel.app",
+    "url": "https://tategaki.jp",
     "author": {
       "@type": "Organization",
       "name": "tategaki"
@@ -97,9 +97,9 @@ export default function RootLayout({
       "テキストファイル入出力",
       "ショートカットキー対応"
     ],
-    "screenshot": "https://tategaki.vercel.app/editor_ogp.png",
+    "screenshot": "https://tategaki.jp/editor_ogp.png",
     "softwareVersion": "1.0",
-    "downloadUrl": "https://tategaki.vercel.app",
+    "downloadUrl": "https://tategaki.jp",
     "datePublished": "2024-01-01",
     "inLanguage": "ja",
     "audience": {
