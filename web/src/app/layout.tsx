@@ -2,9 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import Script from "next/script";
 
-const baseUrl = process.env.VERCEL_URL
-  ? `https://${process.env.VERCEL_URL}`
-  : "https://tategaki.jp";
+const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "https://tategaki.jp";
 
 export const metadata: Metadata = {
   metadataBase: new URL(baseUrl),
@@ -44,10 +42,10 @@ export const metadata: Metadata = {
     url: "https://tategaki.jp",
     images: [
       {
-        url: "/editor_ogp.png",
+        url: "/ogp_default.png",
         width: 1200,
         height: 630,
-        alt: "tategaki 縦書き小説エディタのスクリーンショット - AI執筆支援機能搭載",
+        alt: "tategaki - AI搭載縦書き小説エディタ",
         type: "image/png",
       },
     ],
@@ -56,7 +54,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "tategaki - 縦書きエディタ",
     description: "縦書き表示とAI執筆支援機能を搭載した無料の小説エディタ。原稿用紙風のレイアウトで集中して創作。",
-    images: ["/editor_ogp.png"],
+    images: ["/ogp_default.png"],
   },
   alternates: {
     canonical: "https://tategaki.jp",
