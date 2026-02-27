@@ -1,0 +1,7 @@
+# tategaki
+
+> 縦書き表示とAI執筆支援機能を搭載した、日本語文芸創作に特化したWebエディタです。
+
+## Docs
+
+- [README](llms-full.txt): Full documentation and features of tategaki.
